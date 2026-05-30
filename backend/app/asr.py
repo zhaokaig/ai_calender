@@ -7,6 +7,10 @@ from openai import OpenAI, OpenAIError
 SUPPORTED_AUDIO_EXTENSIONS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"}
 
 
+class AudioTranscriptionError(RuntimeError):
+    pass
+
+
 def transcribe_audio(file_storage) -> str:
     if not current_app.config.get("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY is required for audio transcription")
@@ -21,6 +25,9 @@ def transcribe_audio(file_storage) -> str:
         file_storage.save(temp_file.name)
         temp_file.seek(0)
 
+        if Path(temp_file.name).stat().st_size == 0:
+            raise ValueError("audio file is empty")
+
         client = OpenAI(api_key=current_app.config["OPENAI_API_KEY"])
 
         try:
@@ -30,6 +37,7 @@ def transcribe_audio(file_storage) -> str:
                     file=audio_file,
                 )
         except OpenAIError as error:
-            raise RuntimeError("audio transcription failed") from error
+            current_app.logger.exception("OpenAI audio transcription failed")
+            raise AudioTranscriptionError(f"audio transcription failed: {error}") from error
 
     return transcription.text
