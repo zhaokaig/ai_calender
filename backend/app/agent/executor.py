@@ -41,9 +41,10 @@ def execute_plan(user_id: int, plan) -> AgentResponse:
     candidates = []
     response_status = SUCCESS
 
-    for action in plan.actions[:1]:
+    for index, action in enumerate(plan.actions, start=1):
         logger.info("executor_action_start user_id=%s action_type=%s", user_id, action.type)
         result = _execute_action(user_id, action)
+        result["index"] = index
         logger.info("executor_action_result user_id=%s action_type=%s status=%s", user_id, action.type, result["status"])
         results.append(result)
         events.extend(result.get("events", []))
@@ -105,10 +106,20 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         }
 
     if action.type == DELETE_EVENT:
-        candidates = _find_candidates(user_id, action.arguments.get("selector", {}))
+        selector = action.arguments.get("selector", {})
+        candidates = _find_candidates(user_id, selector)
 
         if not candidates:
             return _not_found_result(action.type)
+
+        if selector.get("all") is True:
+            deleted_events = _delete_all_candidates(user_id, candidates)
+            return {
+                "action": action.type,
+                "status": SUCCESS,
+                "message": f"已删除 {len(deleted_events)} 个日程。",
+                "events": deleted_events,
+            }
 
         if len(candidates) > 1:
             return _needs_selection_result(action.type, candidates)
@@ -128,6 +139,25 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
     }
 
 
+def _delete_all_candidates(user_id: int, candidates: list[dict]) -> list[dict]:
+    deleted_events = []
+    deleted_series_ids = set()
+
+    for candidate in candidates:
+        event_id = candidate["series_id"]
+
+        if event_id in deleted_series_ids:
+            continue
+
+        delete_event(user_id, event_id)
+        deleted_series_ids.add(event_id)
+        deleted_events.append(candidate)
+
+    logger.info("executor_delete_all_result user_id=%s deleted_count=%s", user_id, len(deleted_events))
+
+    return deleted_events
+
+
 def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     logger.info("executor_find_candidates user_id=%s selector=%s", user_id, selector)
     filters = {}
@@ -139,6 +169,10 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
         filters["date"] = selector["date"]
 
     events = list_events(user_id, filters)
+    if selector.get("all") is True:
+        logger.info("executor_candidates_result user_id=%s count=%s delete_all=true", user_id, len(events))
+        return events
+
     keywords = [keyword for keyword in selector.get("keywords", []) if keyword]
 
     if not keywords:
@@ -148,9 +182,9 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     matched = []
 
     for event in events:
-        title = event["title"]
+        title = _normalize_match_text(event["title"])
 
-        if any(keyword in title for keyword in keywords):
+        if any(_normalize_match_text(keyword) in title for keyword in keywords):
             matched.append(event)
 
     candidates = matched or events
@@ -162,6 +196,10 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     )
 
     return candidates
+
+
+def _normalize_match_text(value: str) -> str:
+    return value.replace("的", "").replace(" ", "").strip()
 
 
 def _not_found_result(action_type: str) -> dict:
@@ -198,4 +236,12 @@ def _compose_message(results: list[dict]) -> str:
     if not results:
         return "我没有执行任何操作。"
 
-    return results[0]["message"]
+    if len(results) == 1:
+        return results[0]["message"]
+
+    success_count = len([result for result in results if result["status"] == SUCCESS])
+
+    if success_count == len(results):
+        return f"已完成 {success_count} 个日程操作。"
+
+    return f"已完成 {success_count} 个日程操作，另有 {len(results) - success_count} 个需要处理。"

@@ -4,3 +4,5 @@ frontend/.DS_Store
 __pycache__/
 *.py[cod]
 instance/
+*.log
+backend/.env

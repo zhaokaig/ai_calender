@@ -1,6 +1,5 @@
 import json
-import re
-from datetime import date, datetime, time, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from flask import current_app
@@ -8,329 +7,168 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from ..logging_config import get_logger
-from .schemas import (
-    CALENDAR_INTENT,
-    CREATE_EVENT,
-    DELETE_EVENT,
-    QUERY_EVENTS,
-    SMALLTALK_INTENT,
-    UNCLEAR_INTENT,
-    UPDATE_EVENT,
-    ActionPlan,
-    CalendarAction,
-)
+from .schemas import CALENDAR_INTENT, SMALLTALK_INTENT, UNCLEAR_INTENT, ActionPlan
 
 logger = get_logger("agent.parser")
 
 
-def parse_command(text: str, timezone: str) -> ActionPlan:
+def classify_intent(text: str, timezone: str) -> ActionPlan:
     normalized_text = text.strip()
-    logger.info("parser_start text_length=%s timezone=%s", len(normalized_text), timezone)
+    logger.info("intent_classify_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
     if not normalized_text:
-        logger.warning("parser_unclear reason=empty_text")
+        logger.warning("intent_classify_unclear reason=empty_text")
         return ActionPlan(intent=UNCLEAR_INTENT, reply="我没有听清楚。你可以试试说：“明天下午三点开会”。")
 
-    if not _looks_calendar_related(normalized_text):
-        logger.info("parser_routed_smalltalk")
-        return ActionPlan(intent=SMALLTALK_INTENT, reply="我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。")
+    if not current_app.config.get("OPENAI_API_KEY"):
+        logger.error("intent_classify_failed reason=missing_api_key")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="当前没有配置可用的 Agent 模型 API Key，暂时无法理解指令。")
 
-    if current_app.config.get("OPENAI_API_KEY"):
-        try:
-            plan = _parse_with_langchain(normalized_text, timezone)
-            logger.info("parser_langchain_success intent=%s action_count=%s", plan.intent, len(plan.actions))
-            return plan
-        except Exception:
-            logger.exception("parser_langchain_failed fallback=rules")
-            return _parse_with_rules(normalized_text, timezone)
+    try:
+        payload = _invoke_json(
+            _intent_prompt(),
+            {
+                "text": normalized_text,
+                "timezone": timezone,
+                "current_datetime": _current_datetime(timezone),
+            },
+        )
+    except Exception:
+        logger.exception("intent_classify_failed reason=llm_error")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="我暂时没能理解这句话，请再说一次日程需求。")
+    plan = ActionPlan.from_dict(
+        {
+            "intent": payload.get("intent"),
+            "reply": payload.get("reply"),
+            "actions": [],
+        }
+    )
+    logger.info("intent_classify_success intent=%s reply=%s", plan.intent, plan.reply)
 
-    logger.info("parser_rules_selected reason=missing_openai_api_key")
-    return _parse_with_rules(normalized_text, timezone)
+    return plan
 
 
-def _parse_with_langchain(text: str, timezone: str) -> ActionPlan:
+def plan_calendar_actions(text: str, timezone: str) -> ActionPlan:
+    normalized_text = text.strip()
+    logger.info("action_plan_start text_length=%s timezone=%s", len(normalized_text), timezone)
+
+    if not current_app.config.get("OPENAI_API_KEY"):
+        logger.error("action_plan_failed reason=missing_api_key")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="当前没有配置可用的 Agent 模型 API Key，暂时无法提取日程任务。")
+
+    try:
+        payload = _invoke_json(
+            _planner_prompt(),
+            {
+                "text": normalized_text,
+                "timezone": timezone,
+                "current_datetime": _current_datetime(timezone),
+            },
+        )
+    except Exception:
+        logger.exception("action_plan_failed reason=llm_error")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="我暂时没能提取出日程任务，请换一种说法再试一次。")
+    plan = ActionPlan.from_dict(
+        {
+            "intent": CALENDAR_INTENT,
+            "reply": payload.get("reply"),
+            "actions": payload.get("actions") or [],
+        }
+    )
+    logger.info(
+        "action_plan_success action_count=%s actions=%s",
+        len(plan.actions),
+        [action.to_dict() for action in plan.actions],
+    )
+
+    return plan
+
+
+def generate_smalltalk_reply(text: str, timezone: str) -> str:
+    normalized_text = text.strip()
+    logger.info("smalltalk_reply_start text_length=%s timezone=%s", len(normalized_text), timezone)
+
+    if not current_app.config.get("OPENAI_API_KEY"):
+        logger.error("smalltalk_reply_failed reason=missing_api_key")
+        return "我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。"
+
+    try:
+        payload = _invoke_json(
+            _smalltalk_prompt(),
+            {
+                "text": normalized_text,
+                "timezone": timezone,
+                "current_datetime": _current_datetime(timezone),
+            },
+        )
+    except Exception:
+        logger.exception("smalltalk_reply_failed reason=llm_error")
+        return "我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。"
+    reply = str(payload.get("reply") or "我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。").strip()
+    logger.info("smalltalk_reply_success reply_length=%s", len(reply))
+
+    return reply
+
+
+def parse_command(text: str, timezone: str) -> ActionPlan:
+    intent_plan = classify_intent(text, timezone)
+
+    if intent_plan.intent != CALENDAR_INTENT:
+        return intent_plan
+
+    return plan_calendar_actions(text, timezone)
+
+
+def _invoke_json(system_prompt: str, payload: dict) -> dict:
     model = ChatOpenAI(
         model=current_app.config["AGENT_MODEL"],
         temperature=current_app.config["AGENT_TEMPERATURE"],
         api_key=current_app.config["OPENAI_API_KEY"],
+        base_url=current_app.config["OPENAI_BASE_URL"],
     )
     response = model.bind(response_format={"type": "json_object"}).invoke(
         [
-            SystemMessage(content=_system_prompt()),
-            HumanMessage(
-                content=json.dumps(
-                    {
-                        "text": text,
-                        "timezone": timezone,
-                        "current_date": date.today().isoformat(),
-                    },
-                    ensure_ascii=False,
-                )
-            ),
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
         ]
     )
 
-    return ActionPlan.from_dict(json.loads(response.content))
+    return json.loads(response.content)
 
 
-def _parse_with_rules(text: str, timezone: str) -> ActionPlan:
-    action_type = _detect_action_type(text)
-    action_arguments = _extract_arguments(text, timezone, action_type)
-    logger.info("parser_rules_success action_type=%s", action_type)
+def _current_datetime(timezone: str) -> str:
+    return datetime.now(ZoneInfo(timezone)).isoformat()
 
-    return ActionPlan(
-        intent=CALENDAR_INTENT,
-        actions=[
-            CalendarAction(type=action_type, arguments=action_arguments, confidence=0.6)
-        ],
-    )
 
-
-def _detect_action_type(text: str) -> str:
-    if any(keyword in text for keyword in ("删除", "取消", "删掉")):
-        return DELETE_EVENT
-
-    if any(keyword in text for keyword in ("改", "修改", "换到", "挪到")):
-        return UPDATE_EVENT
-
-    if any(keyword in text for keyword in ("什么安排", "有哪些", "查询", "看看", "日程")) and not any(
-        keyword in text for keyword in ("添加", "创建", "安排一个")
-    ):
-        return QUERY_EVENTS
-
-    return CREATE_EVENT
-
-
-def _extract_arguments(text: str, timezone: str, action_type: str) -> dict:
-    selected_date = _extract_date(text, timezone)
-    start_time = _extract_datetime(text, timezone)
-    recurrence = _extract_recurrence(text, start_time)
-    title = _extract_title(text)
-
-    if action_type == CREATE_EVENT:
-        arguments = {
-            "title": title,
-            "start_time": start_time.isoformat() if start_time else None,
-            "end_time": None,
-            "notes": None,
-            **recurrence,
-        }
-        return {key: value for key, value in arguments.items() if value is not None}
-
-    if action_type == QUERY_EVENTS:
-        query_date = selected_date
-        return {
-            "date": query_date.isoformat(),
-            "keywords": _extract_keywords(text),
-        }
-
-    selector = {
-        "date": start_time.date().isoformat() if start_time else selected_date.isoformat(),
-        "keywords": _extract_keywords(text),
-    }
-
-    if start_time:
-        selector["start"] = start_time.isoformat()
-        selector["end"] = (start_time + timedelta(hours=1)).isoformat()
-
-    if action_type == DELETE_EVENT:
-        return {"selector": selector}
-
-    updates = {}
-    updated_time = _extract_update_time(text, timezone, start_time)
-
-    if updated_time:
-        updates["start_time"] = updated_time.isoformat()
-        updates["end_time"] = (updated_time + timedelta(hours=1)).isoformat()
-
-    updated_title = _extract_updated_title(text)
-
-    if updated_title:
-        updates["title"] = updated_title
-
-    return {
-        "selector": selector,
-        "updates": updates,
-    }
-
-
-def _looks_calendar_related(text: str) -> bool:
-    keywords = (
-        "会",
-        "会议",
-        "日程",
-        "安排",
-        "提醒",
-        "上午",
-        "下午",
-        "晚上",
-        "每天",
-        "每周",
-        "每月",
-        "删除",
-        "修改",
-        "查询",
-    )
-    return any(keyword in text for keyword in keywords)
-
-
-def _extract_date(text: str, timezone: str) -> date:
-    selected_date = _now(timezone).date()
-    iso_match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
-
-    if iso_match:
-        return date(
-            int(iso_match.group(1)),
-            int(iso_match.group(2)),
-            int(iso_match.group(3)),
-        )
-
-    chinese_date_match = re.search(r"(\d{1,2})月(\d{1,2})(日|号)?", text)
-
-    if chinese_date_match:
-        return date(
-            selected_date.year,
-            int(chinese_date_match.group(1)),
-            int(chinese_date_match.group(2)),
-        )
-
-    if "后天" in text:
-        return selected_date + timedelta(days=2)
-
-    if "明天" in text:
-        return selected_date + timedelta(days=1)
-
-    return selected_date
-
-
-def _extract_datetime(text: str, timezone: str) -> datetime | None:
-    selected_date = _extract_date(text, timezone)
-    hour = _extract_hour(text)
-
-    if hour is None:
-        return None
-
-    return datetime.combine(selected_date, time(hour=hour), tzinfo=ZoneInfo(timezone))
-
-
-def _extract_update_time(text: str, timezone: str, original_time: datetime | None) -> datetime | None:
-    marker_match = re.search(r"(改到|改成|换到|挪到)(.+)$", text)
-
-    if not marker_match:
-        return None
-
-    target_text = marker_match.group(2)
-    hour = _extract_hour(target_text)
-
-    if hour is None:
-        return None
-
-    if original_time and original_time.hour >= 12 and hour < 12 and "上午" not in target_text:
-        hour += 12
-
-    selected_date = original_time.date() if original_time else _now(timezone).date()
-    return datetime.combine(selected_date, time(hour=hour), tzinfo=ZoneInfo(timezone))
-
-
-def _extract_hour(text: str) -> int | None:
-    digit_match = re.search(r"(\d{1,2})[点:：]", text)
-
-    if digit_match:
-        hour = int(digit_match.group(1))
-    else:
-        chinese_hours = {
-            "一": 1,
-            "二": 2,
-            "两": 2,
-            "三": 3,
-            "四": 4,
-            "五": 5,
-            "六": 6,
-            "七": 7,
-            "八": 8,
-            "九": 9,
-            "十": 10,
-        }
-        chinese_match = re.search(r"([一二两三四五六七八九十])点", text)
-
-        if not chinese_match:
-            return None
-
-        hour = chinese_hours[chinese_match.group(1)]
-
-    if "下午" in text or "晚上" in text:
-        if hour < 12:
-            hour += 12
-
-    return hour
-
-
-def _extract_title(text: str) -> str:
-    cleaned = text
-
-    for word in ("帮我", "添加", "创建", "安排一个", "安排", "删除", "取消", "修改", "把"):
-        cleaned = cleaned.replace(word, "")
-
-    cleaned = re.sub(r"\d{4}-\d{1,2}-\d{1,2}", "", cleaned)
-    cleaned = re.sub(r"\d{1,2}月\d{1,2}(日|号)?", "", cleaned)
-    cleaned = re.sub(r"(今天|明天|后天|上午|下午|晚上|每天|每周|每月|周[一二三四五六日天]?|\d{1,2}[点:：]|[一二两三四五六七八九十]点)", "", cleaned)
-    cleaned = cleaned.replace("的", "").replace("到", "").strip(" ，。,")
-
-    return cleaned or "日程"
-
-
-def _extract_updated_title(text: str) -> str | None:
-    title_match = re.search(r"改成(.+)$", text)
-
-    if not title_match:
-        return None
-
-    updated = title_match.group(1).strip(" ，。,")
-
-    if _extract_hour(updated) is not None:
-        return None
-
-    return updated or None
-
-
-def _extract_keywords(text: str) -> list[str]:
-    title = _extract_title(text)
-    ignored = {"日程", "有什么", "有哪些", "查询", "看看", "安排"}
-    keywords = []
-
-    for keyword in re.split(r"\s+", title):
-        cleaned = keyword.replace("改", "").replace("删", "")
-
-        if cleaned and cleaned not in ignored:
-            keywords.append(cleaned)
-
-    return keywords
-
-
-def _extract_recurrence(text: str, start_time: datetime | None) -> dict:
-    if "每天" in text:
-        return {"recurrence_type": "daily", "recurrence_interval": 1}
-
-    if "每周" in text:
-        return {"recurrence_type": "weekly", "recurrence_interval": 1}
-
-    if "每月" in text:
-        return {"recurrence_type": "monthly", "recurrence_interval": 1}
-
-    return {"recurrence_type": "none", "recurrence_interval": 1}
-
-
-def _now(timezone: str) -> datetime:
-    return datetime.now(ZoneInfo(timezone))
-
-
-def _system_prompt() -> str:
+def _intent_prompt() -> str:
     return """
-You are a calendar command planner. Return JSON only.
+你是语音日历助手的“意图识别”节点。你只能返回 JSON，不要输出解释文字。
 
-Schema:
+输出结构：
 {
   "intent": "calendar" | "smalltalk" | "unsupported" | "unclear",
+  "reply": string | null
+}
+
+意图定义：
+- calendar：用户想创建、删除、修改、查询、列出、清空、取消或改期日程/提醒。一句话里可能包含多个日程任务。
+- smalltalk：问候、感谢、闲聊，或不需要执行任务的普通对话。
+- unsupported：明确超出日历能力范围的请求，例如天气、邮件、地图、新闻、编程、购物等。
+- unclear：文本太短、不完整、含糊，或没有足够信息判断用户意图。
+
+规则：
+- 这里只做意图识别，不要提取具体任务。
+- 如果是 smalltalk 或 unsupported，给出简短中文回复，并自然引导用户使用日历功能。
+- 如果是 calendar，reply 必须为 null。
+""".strip()
+
+
+def _planner_prompt() -> str:
+    return """
+你是语音日历助手的“任务提取”节点。你只能返回 JSON，不要输出解释文字。
+
+输出结构：
+{
   "reply": string | null,
   "actions": [
     {
@@ -341,13 +179,58 @@ Schema:
   ]
 }
 
-Rules:
-- Always use actions as a list.
-- Use ISO datetime strings with the provided timezone.
-- For create_event arguments, use title, start_time, end_time, notes, recurrence_type, recurrence_interval, recurrence_until.
-- For query_events arguments, use date or start/end plus optional keywords.
-- For update_event arguments, use selector and updates.
-- For delete_event arguments, use selector.
-- selector may include date, start, end, and keywords.
-- Do not execute anything. Only plan.
+动作参数规则：
+- create_event 的 arguments 使用：title、start_time、end_time、notes、recurrence_type、recurrence_interval、recurrence_until。
+- query_events 的 arguments 使用：date 或 start/end，可附加 keywords。
+- update_event 的 arguments 使用：selector 和 updates。
+- delete_event 的 arguments 使用：selector。
+- selector 可包含：date、start、end、keywords、all。
+- recurrence_type 只能是：none、daily、weekly、monthly。
+- recurrence_interval 默认是 1。
+- 时间必须使用带有用户 timezone 的 ISO datetime 字符串。
+- 创建或修改事件时，如果用户没有说明 end_time，则设为 start_time 后一小时。
+- 如果用户说每天、每周、每月，按语义设置 recurrence_type。
+- 如果用户明确要求删除某天所有事件，设置 selector.all 为 true，keywords 设为空数组。
+- 如果是删除/修改单个具名事件，用户提到日期或时间时要放入 selector，并从事件标题、人名、地点中提取有意义的 keywords。
+- 必须保留所有人名、公司名、地点、事件名、专有名词、可能的错别字，以及用户自己的表达。
+
+多任务规则：
+- actions 必须始终是数组。
+- 如果一句话里有多个操作，按用户原始顺序为每个操作返回一个 action。
+- 不要把多个创建、删除、修改任务合并成一个 action。
+- 同一句话里可以同时提取创建、删除、修改、查询任务。
+- 如果后面的任务省略日期，但前文已经给出日期，需要继承该日期。
+- 如果后面的任务省略“上午/下午/晚上”，但上下文能推断，按上下文合理推断。
+
+示例：
+输入文本：明天上午9点开产品讨论会，10点半有一个面试，然后晚上跟李总的晚饭取消
+输出动作：
+- 创建事件：产品讨论会，时间为明天 09:00
+- 创建事件：面试，时间为明天 10:30
+- 删除事件：selector.date 为明天，selector.keywords 为 ["李总", "晚饭"]
+
+输入文本：删除明天所有日程
+输出动作：
+- 删除事件：selector.date 为明天，selector.all 为 true，selector.keywords 为空数组
+
+规则：
+- 不要执行任何操作，只做计划。
+- 如果无法提取可执行的日程任务，返回空 actions，并在 reply 中给出简短中文说明。
+""".strip()
+
+
+def _smalltalk_prompt() -> str:
+    return """
+你是语音日历助手的“闲聊回复”节点。你只能返回 JSON，不要输出解释文字。
+
+输出结构：
+{
+  "reply": string
+}
+
+规则：
+- 用简短、友好的中文回复。
+- 如果用户在闲聊，简短回应即可。
+- 合适时自然引导用户说出日历指令。
+- 不要声称自己已经执行了日程操作。
 """.strip()

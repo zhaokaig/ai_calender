@@ -5,7 +5,7 @@ from langgraph.graph import END, StateGraph
 
 from ..logging_config import get_logger
 from .executor import execute_plan
-from .parser import parse_command
+from .parser import classify_intent, generate_smalltalk_reply, plan_calendar_actions
 from .schemas import CALENDAR_INTENT, AgentResponse, SMALLTALK_INTENT, SUCCESS, UNSUPPORTED, ActionPlan
 
 logger = get_logger("agent.graph")
@@ -39,33 +39,33 @@ def run_voice_command_graph(user_id: int, text: str, timezone: str) -> AgentResp
 @lru_cache(maxsize=1)
 def _build_graph():
     graph = StateGraph(VoiceCommandState)
-    graph.add_node("intent_router", _intent_router)
+    graph.add_node("intent_classifier", _intent_classifier)
     graph.add_node("action_planner", _action_planner)
     graph.add_node("tool_executor", _tool_executor)
-    graph.add_node("chat_fallback", _chat_fallback)
+    graph.add_node("chat_responder", _chat_responder)
     graph.add_node("response_composer", _response_composer)
 
-    graph.set_entry_point("intent_router")
+    graph.set_entry_point("intent_classifier")
     graph.add_conditional_edges(
-        "intent_router",
+        "intent_classifier",
         _route_after_intent,
         {
             "calendar": "action_planner",
-            "fallback": "chat_fallback",
+            "fallback": "chat_responder",
         },
     )
     graph.add_edge("action_planner", "tool_executor")
     graph.add_edge("tool_executor", "response_composer")
-    graph.add_edge("chat_fallback", "response_composer")
+    graph.add_edge("chat_responder", "response_composer")
     graph.add_edge("response_composer", END)
 
     return graph.compile()
 
 
-def _intent_router(state: VoiceCommandState) -> dict[str, Any]:
-    logger.info("graph_node_start node=intent_router user_id=%s", state["user_id"])
-    plan = parse_command(state["text"], state["timezone"])
-    logger.info("graph_node_finish node=intent_router intent=%s action_count=%s", plan.intent, len(plan.actions))
+def _intent_classifier(state: VoiceCommandState) -> dict[str, Any]:
+    logger.info("graph_node_start node=intent_classifier user_id=%s", state["user_id"])
+    plan = classify_intent(state["text"], state["timezone"])
+    logger.info("graph_node_finish node=intent_classifier intent=%s action_count=%s", plan.intent, len(plan.actions))
     return {"plan": plan}
 
 
@@ -74,8 +74,10 @@ def _route_after_intent(state: VoiceCommandState) -> str:
 
 
 def _action_planner(state: VoiceCommandState) -> dict[str, Any]:
-    logger.info("graph_node_start node=action_planner action_count=%s", len(state["plan"].actions))
-    return {"plan": state["plan"]}
+    logger.info("graph_node_start node=action_planner user_id=%s", state["user_id"])
+    plan = plan_calendar_actions(state["text"], state["timezone"])
+    logger.info("graph_node_finish node=action_planner action_count=%s", len(plan.actions))
+    return {"plan": plan}
 
 
 def _tool_executor(state: VoiceCommandState) -> dict[str, Any]:
@@ -88,14 +90,19 @@ def _tool_executor(state: VoiceCommandState) -> dict[str, Any]:
     }
 
 
-def _chat_fallback(state: VoiceCommandState) -> dict[str, Any]:
+def _chat_responder(state: VoiceCommandState) -> dict[str, Any]:
     plan = state["plan"]
-    logger.info("graph_node_start node=chat_fallback intent=%s", plan.intent)
+    logger.info("graph_node_start node=chat_responder intent=%s", plan.intent)
+    reply = plan.reply
+
+    if plan.intent == SMALLTALK_INTENT:
+        reply = generate_smalltalk_reply(state["text"], state["timezone"])
+
     return {
         "response": AgentResponse(
             intent=plan.intent,
             status=SUCCESS if plan.intent == SMALLTALK_INTENT else UNSUPPORTED,
-            message=plan.reply or "我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。",
+            message=reply or "我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。",
             actions=plan.actions,
         )
     }

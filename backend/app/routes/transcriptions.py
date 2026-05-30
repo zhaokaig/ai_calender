@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 from ..asr import AudioTranscriptionError, transcribe_audio
 from ..auth import login_required
 from ..logging_config import get_logger
+from ..text_normalizer import normalize_transcript
 
 transcriptions_bp = Blueprint("transcriptions", __name__, url_prefix="/api")
 logger = get_logger("routes.transcriptions")
@@ -20,7 +21,8 @@ def transcription_route():
     logger.info("transcription_received filename=%s", audio_file.filename)
 
     try:
-        text = transcribe_audio(audio_file)
+        raw_text = transcribe_audio(audio_file)
+        text = normalize_transcript(raw_text)
     except ValueError as error:
         logger.warning("transcription_failed filename=%s reason=%s", audio_file.filename, str(error))
         return jsonify({"error": str(error)}), 400
@@ -28,6 +30,13 @@ def transcription_route():
         logger.error("transcription_failed filename=%s reason=asr_error", audio_file.filename)
         return jsonify({"error": str(error)}), 502
 
-    logger.info("transcription_success filename=%s text_length=%s", audio_file.filename, len(text or ""))
+    logger.info(
+        "transcription_success filename=%s raw_text_length=%s text_length=%s raw_text=%s text=%s",
+        audio_file.filename,
+        len(raw_text or ""),
+        len(text or ""),
+        raw_text,
+        text,
+    )
 
-    return jsonify({"text": text})
+    return jsonify({"text": text, "raw_text": raw_text})

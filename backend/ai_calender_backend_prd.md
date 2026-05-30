@@ -40,6 +40,7 @@
 | 查询日程 | “明天有什么安排？” | 返回明天的日程列表 |
 | 修改日程 | “把明天下午三点的会改到四点” | 将匹配事件改到 16:00 |
 | 删除日程 | “删除明天下午三点的会议” | 删除匹配事件 |
+| 多操作 | “明天上午9点开产品讨论会，10点半有一个面试，然后晚上跟李总的晚饭取消” | 按顺序执行多个日程操作 |
 
 ### 2.3 明确不做
 
@@ -48,7 +49,6 @@
 - 复杂权限系统；
 - 团队、共享日历、邀请成员；
 - 多轮对话和长期记忆；
-- 一句话多操作；
 - 与 iOS/Android 系统日历同步；
 - Push 通知、小组件、语音唤醒；
 - 复杂冲突检测和重复日程；
@@ -87,7 +87,8 @@
 - Python + Flask 或 FastAPI；
 - SQLite；
 - Werkzeug password hash；
-- OpenAI Audio Transcriptions API；
+- 阿里云百炼 DashScope OpenAI 兼容 API；
+- Qwen3-ASR-Flash；
 - LangChain；
 - LangGraph；
 - OpenAI 文本模型；
@@ -171,7 +172,7 @@
 | `POST` | `/api/events` | 创建事件 |
 | `PATCH` | `/api/events/{id}` | 修改事件 |
 | `DELETE` | `/api/events/{id}` | 删除事件 |
-| `POST` | `/api/transcriptions` | 上传音频并通过 OpenAI ASR 转写文本 |
+| `POST` | `/api/transcriptions` | 上传音频并通过 Qwen3-ASR-Flash 转写文本 |
 | `POST` | `/api/voice-command` | 处理自然语言指令并执行 |
 
 所有日程 API 都需要携带：
