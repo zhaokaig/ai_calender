@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarDays,
@@ -326,7 +326,7 @@ function CalendarPage({ token, user, onLogout }) {
             </div>
           </section>
 
-          <ChatPanel />
+          <ChatPanel token={token} onUnauthorized={onLogout} onCommandComplete={loadEvents} />
         </aside>
       </section>
 
@@ -391,10 +391,25 @@ function CalendarGrid({ currentMonth, selectedDate, eventsByDate, onSelectDate }
   );
 }
 
-function ChatPanel() {
+function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const stopTimerRef = useRef(null);
   const [messages, setMessages] = useState([
     { role: "assistant", text: "你好，我会在这里显示语音或文字指令的结果。" },
   ]);
+  const [recordingMode, setRecordingMode] = useState(null);
+  const [recordedAudio, setRecordedAudio] = useState(null);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(stopTimerRef.current);
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
   const addPlaceholder = (label) => {
     setMessages((current) => [
@@ -402,6 +417,115 @@ function ChatPanel() {
       { role: "user", text: label },
       { role: "assistant", text: "这个入口已经准备好，暂时还没有接入 LLM 服务。" },
     ]);
+  };
+
+  const startRecording = async (mode) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      });
+
+      mediaRecorder.addEventListener("stop", () => {
+        const mimeType = mediaRecorder.mimeType || "audio/webm";
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        stream.getTracks().forEach((track) => track.stop());
+        setRecordedAudio({
+          blob: audioBlob,
+          mode,
+          mimeType,
+          recordedAt: new Date(),
+        });
+        setRecordingMode(null);
+        processRecordedAudio(audioBlob, mimeType, mode);
+      });
+
+      mediaRecorder.start();
+      setRecordingMode(mode);
+      setRecordedAudio(null);
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: mode === "short" ? "短录音开始，15 秒后会自动停止。" : "长录音开始，再次点击可停止。" },
+      ]);
+
+      if (mode === "short") {
+        stopTimerRef.current = window.setTimeout(stopRecording, 15000);
+      }
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: `无法开始录音：${error.message}` },
+      ]);
+    }
+  };
+
+  const stopRecording = () => {
+    window.clearTimeout(stopTimerRef.current);
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder?.state === "recording") {
+      recorder.stop();
+    }
+  };
+
+  const handleRecordingButton = (mode) => {
+    if (recordingMode === mode) {
+      stopRecording();
+      return;
+    }
+
+    if (recordingMode) {
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: "请先停止当前录音。" },
+      ]);
+      return;
+    }
+
+    startRecording(mode);
+  };
+
+  const processRecordedAudio = async (audioBlob, mimeType, mode) => {
+    const label = mode === "short" ? "短录音" : "长录音";
+    setIsProcessingAudio(true);
+    setMessages((current) => [
+      ...current,
+      { role: "user", text: `${label}已完成` },
+      { role: "assistant", text: "正在发送录音到后端处理..." },
+    ]);
+
+    try {
+      const transcribed = await transcribeAudio(audioBlob, mimeType, token);
+      const commandResult = await runVoiceCommand(transcribed.text, token);
+      await onCommandComplete();
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: commandResult.message || "后端处理完成，日历已刷新。",
+          transcript: transcribed.text,
+          result: commandResult,
+        },
+      ]);
+    } catch (error) {
+      if (error.status === 401) {
+        onUnauthorized();
+        return;
+      }
+
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: `录音处理失败：${error.message}` },
+      ]);
+    } finally {
+      setIsProcessingAudio(false);
+    }
   };
 
   return (
@@ -416,26 +540,77 @@ function ChatPanel() {
       <div className="message-list">
         {messages.map((message, index) => (
           <div className={`message ${message.role}`} key={`${message.role}-${index}`}>
-            {message.text}
+            <p>{message.text}</p>
+            {message.transcript ? (
+              <div className="voice-result-block">
+                <span>识别文本</span>
+                <strong>{message.transcript}</strong>
+              </div>
+            ) : null}
+            {message.result ? <VoiceResultSummary result={message.result} /> : null}
           </div>
         ))}
       </div>
 
       <div className="input-actions">
-        <button type="button" title="短录音" onClick={() => addPlaceholder("短录音")}>
+        <button
+          className={recordingMode === "short" ? "recording" : ""}
+          type="button"
+          title="短录音"
+          disabled={isProcessingAudio}
+          onClick={() => handleRecordingButton("short")}
+        >
           <Mic size={18} aria-hidden="true" />
-          短录音
+          {recordingMode === "short" ? "停止" : "短录音"}
         </button>
-        <button type="button" onClick={() => addPlaceholder("长录音")}>
+        <button
+          className={recordingMode === "long" ? "recording" : ""}
+          type="button"
+          disabled={isProcessingAudio}
+          onClick={() => handleRecordingButton("long")}
+        >
           <Mic size={18} aria-hidden="true" />
-          长录音
+          {recordingMode === "long" ? "停止" : "长录音"}
         </button>
-        <button type="button" onClick={() => addPlaceholder("键盘输入")}>
+        <button type="button" disabled={isProcessingAudio} onClick={() => addPlaceholder("键盘输入")}>
           <Keyboard size={18} aria-hidden="true" />
           键盘
         </button>
       </div>
+
+      {recordedAudio ? (
+        <p className="recording-status">
+          最近录音：{recordedAudio.mode === "short" ? "短录音" : "长录音"}，
+          {Math.max(1, Math.round(recordedAudio.blob.size / 1024))} KB
+          {isProcessingAudio ? "，处理中" : ""}
+        </p>
+      ) : null}
     </section>
+  );
+}
+
+function VoiceResultSummary({ result }) {
+  const relatedEvents = [...(result.events || []), ...(result.candidates || [])];
+
+  return (
+    <div className="voice-result-summary">
+      <div className="result-meta">
+        <span>{result.intent || "unknown"}</span>
+        <span>{result.status || "unknown"}</span>
+      </div>
+
+      {relatedEvents.length > 0 ? (
+        <div className="result-events">
+          {relatedEvents.slice(0, 3).map((eventItem) => (
+            <div className="result-event" key={`${eventItem.id}-${eventItem.start_time}`}>
+              <strong>{eventItem.title}</strong>
+              {eventItem.start_time ? <span>{formatVoiceResultTime(eventItem)}</span> : null}
+            </div>
+          ))}
+          {relatedEvents.length > 3 ? <em>还有 {relatedEvents.length - 3} 个结果</em> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -628,6 +803,40 @@ async function apiRequest(path, { method = "GET", body, token } = {}) {
   return payload;
 }
 
+async function transcribeAudio(audioBlob, mimeType, token) {
+  const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+  const formData = new FormData();
+  formData.append("file", audioBlob, `recording.${extension}`);
+
+  const response = await fetch(`${API_BASE_URL}/api/transcriptions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(payload.error || "录音转写失败");
+    error.status = response.status;
+    throw error;
+  }
+
+  return payload;
+}
+
+function runVoiceCommand(text, token) {
+  return apiRequest("/api/voice-command", {
+    method: "POST",
+    token,
+    body: {
+      text,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+    },
+  });
+}
+
 function getMonthRange(monthDate) {
   const start = startOfMonth(monthDate);
   const end = addMonths(start, 1);
@@ -701,6 +910,25 @@ function formatTimeRange(eventItem) {
     hour: "2-digit",
     minute: "2-digit",
   });
+  const end = new Date(eventItem.end_time).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${start} - ${end}`;
+}
+
+function formatVoiceResultTime(eventItem) {
+  const start = new Date(eventItem.start_time).toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  if (!eventItem.end_time) {
+    return start;
+  }
+
   const end = new Date(eventItem.end_time).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",

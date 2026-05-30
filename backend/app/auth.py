@@ -5,13 +5,18 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .database import get_db
+from .logging_config import get_logger
+
+logger = get_logger("auth")
 
 
 def register_user(data: dict) -> dict:
     username = _required_text(data, "username")
     password = _required_text(data, "password")
+    logger.info("register_attempt username=%s", username)
 
     if len(password) < 6:
+        logger.warning("register_failed username=%s reason=weak_password", username)
         raise ValueError("password must be at least 6 characters")
 
     try:
@@ -22,10 +27,12 @@ def register_user(data: dict) -> dict:
         get_db().commit()
     except Exception as error:
         if "UNIQUE constraint failed" in str(error):
+            logger.warning("register_failed username=%s reason=username_exists", username)
             raise ValueError("username already exists") from error
         raise
 
     user = get_user(cursor.lastrowid)
+    logger.info("register_success user_id=%s username=%s", user["id"], username)
 
     return {
         "user": user,
@@ -36,13 +43,16 @@ def register_user(data: dict) -> dict:
 def login_user(data: dict) -> dict:
     username = _required_text(data, "username")
     password = _required_text(data, "password")
+    logger.info("login_attempt username=%s", username)
 
     row = get_db().execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
 
     if row is None or not check_password_hash(row["password_hash"], password):
+        logger.warning("login_failed username=%s reason=invalid_credentials", username)
         raise ValueError("invalid username or password")
 
     user = _serialize_user(dict(row))
+    logger.info("login_success user_id=%s username=%s", user["id"], username)
 
     return {
         "user": user,
@@ -82,6 +92,7 @@ def login_required(route):
         user = get_current_user()
 
         if user is None:
+            logger.warning("auth_required_failed path=%s", request.path)
             return jsonify({"error": "authentication required"}), 401
 
         g.current_user = user

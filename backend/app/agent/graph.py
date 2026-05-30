@@ -3,9 +3,12 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from ..logging_config import get_logger
 from .executor import execute_plan
 from .parser import parse_command
 from .schemas import CALENDAR_INTENT, AgentResponse, SMALLTALK_INTENT, SUCCESS, UNSUPPORTED, ActionPlan
+
+logger = get_logger("agent.graph")
 
 
 class VoiceCommandState(TypedDict, total=False):
@@ -17,6 +20,7 @@ class VoiceCommandState(TypedDict, total=False):
 
 
 def run_voice_command_graph(user_id: int, text: str, timezone: str) -> AgentResponse:
+    logger.info("graph_start user_id=%s text_length=%s timezone=%s", user_id, len(text), timezone)
     graph = _build_graph()
     final_state = graph.invoke(
         {
@@ -26,7 +30,10 @@ def run_voice_command_graph(user_id: int, text: str, timezone: str) -> AgentResp
         }
     )
 
-    return final_state["response"]
+    response = final_state["response"]
+    logger.info("graph_finish user_id=%s status=%s intent=%s", user_id, response.status, response.intent)
+
+    return response
 
 
 @lru_cache(maxsize=1)
@@ -56,7 +63,9 @@ def _build_graph():
 
 
 def _intent_router(state: VoiceCommandState) -> dict[str, Any]:
+    logger.info("graph_node_start node=intent_router user_id=%s", state["user_id"])
     plan = parse_command(state["text"], state["timezone"])
+    logger.info("graph_node_finish node=intent_router intent=%s action_count=%s", plan.intent, len(plan.actions))
     return {"plan": plan}
 
 
@@ -65,10 +74,12 @@ def _route_after_intent(state: VoiceCommandState) -> str:
 
 
 def _action_planner(state: VoiceCommandState) -> dict[str, Any]:
+    logger.info("graph_node_start node=action_planner action_count=%s", len(state["plan"].actions))
     return {"plan": state["plan"]}
 
 
 def _tool_executor(state: VoiceCommandState) -> dict[str, Any]:
+    logger.info("graph_node_start node=tool_executor user_id=%s", state["user_id"])
     return {
         "response": execute_plan(
             state["user_id"],
@@ -79,6 +90,7 @@ def _tool_executor(state: VoiceCommandState) -> dict[str, Any]:
 
 def _chat_fallback(state: VoiceCommandState) -> dict[str, Any]:
     plan = state["plan"]
+    logger.info("graph_node_start node=chat_fallback intent=%s", plan.intent)
     return {
         "response": AgentResponse(
             intent=plan.intent,
@@ -90,4 +102,5 @@ def _chat_fallback(state: VoiceCommandState) -> dict[str, Any]:
 
 
 def _response_composer(state: VoiceCommandState) -> dict[str, Any]:
+    logger.info("graph_node_start node=response_composer status=%s", state["response"].status)
     return {"response": state["response"]}

@@ -12,10 +12,14 @@ from .schemas import (
     AgentResponse,
     CalendarAction,
 )
+from ..logging_config import get_logger
 from ..event_service import create_event, delete_event, list_events, update_event
+
+logger = get_logger("agent.executor")
 
 
 def execute_plan(user_id: int, plan) -> AgentResponse:
+    logger.info("executor_start user_id=%s intent=%s action_count=%s", user_id, plan.intent, len(plan.actions))
     if plan.intent != CALENDAR_INTENT:
         return AgentResponse(
             intent=plan.intent,
@@ -38,7 +42,9 @@ def execute_plan(user_id: int, plan) -> AgentResponse:
     response_status = SUCCESS
 
     for action in plan.actions[:1]:
+        logger.info("executor_action_start user_id=%s action_type=%s", user_id, action.type)
         result = _execute_action(user_id, action)
+        logger.info("executor_action_result user_id=%s action_type=%s status=%s", user_id, action.type, result["status"])
         results.append(result)
         events.extend(result.get("events", []))
         candidates.extend(result.get("candidates", []))
@@ -123,6 +129,7 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
 
 
 def _find_candidates(user_id: int, selector: dict) -> list[dict]:
+    logger.info("executor_find_candidates user_id=%s selector=%s", user_id, selector)
     filters = {}
 
     if selector.get("start") and selector.get("end"):
@@ -135,6 +142,7 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     keywords = [keyword for keyword in selector.get("keywords", []) if keyword]
 
     if not keywords:
+        logger.info("executor_candidates_result user_id=%s count=%s keyword_filtered=false", user_id, len(events))
         return events
 
     matched = []
@@ -145,7 +153,15 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
         if any(keyword in title for keyword in keywords):
             matched.append(event)
 
-    return matched or events
+    candidates = matched or events
+    logger.info(
+        "executor_candidates_result user_id=%s count=%s keyword_filtered=true matched_count=%s",
+        user_id,
+        len(candidates),
+        len(matched),
+    )
+
+    return candidates
 
 
 def _not_found_result(action_type: str) -> dict:
