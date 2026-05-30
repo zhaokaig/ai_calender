@@ -536,11 +536,11 @@ h2 {
 
 .input-actions button {
   min-width: 0;
+  aspect-ratio: 1;
   border-color: #d7deea;
   color: #344054;
   background: #ffffff;
-  padding: 0 8px;
-  white-space: nowrap;
+  padding: 0;
 }
 
 .input-actions button.recording {

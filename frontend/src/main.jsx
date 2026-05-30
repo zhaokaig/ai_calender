@@ -557,24 +557,30 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           className={recordingMode === "short" ? "recording" : ""}
           type="button"
           title="短录音"
+          aria-label={recordingMode === "short" ? "停止短录音" : "短录音"}
           disabled={isProcessingAudio}
           onClick={() => handleRecordingButton("short")}
         >
-          <Mic size={18} aria-hidden="true" />
-          {recordingMode === "short" ? "停止" : "短录音"}
+          <Mic size={20} aria-hidden="true" />
         </button>
         <button
           className={recordingMode === "long" ? "recording" : ""}
           type="button"
+          title={recordingMode === "long" ? "停止长录音" : "长录音"}
+          aria-label={recordingMode === "long" ? "停止长录音" : "长录音"}
           disabled={isProcessingAudio}
           onClick={() => handleRecordingButton("long")}
         >
-          <Mic size={18} aria-hidden="true" />
-          {recordingMode === "long" ? "停止" : "长录音"}
+          <Mic size={20} aria-hidden="true" />
         </button>
-        <button type="button" disabled={isProcessingAudio} onClick={() => addPlaceholder("键盘输入")}>
-          <Keyboard size={18} aria-hidden="true" />
-          键盘
+        <button
+          type="button"
+          title="键盘输入"
+          aria-label="键盘输入"
+          disabled={isProcessingAudio}
+          onClick={() => addPlaceholder("键盘输入")}
+        >
+          <Keyboard size={20} aria-hidden="true" />
         </button>
       </div>
 
