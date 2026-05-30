@@ -365,16 +365,23 @@ function CalendarGrid({ currentMonth, selectedDate, eventsByDate, onSelectDate }
         const isToday = dateKey === todayKey;
 
         return (
-          <button
+          <div
             className={[
               "day-cell",
               isOutside ? "outside" : "",
               isSelected ? "selected" : "",
               isToday ? "today" : "",
             ].join(" ")}
-            type="button"
             key={dateKey}
+            role="button"
+            tabIndex={0}
             onClick={() => onSelectDate(dateKey)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectDate(dateKey);
+              }
+            }}
           >
             <span className="day-number">{day.getDate()}</span>
             <div className="day-events">
@@ -384,7 +391,7 @@ function CalendarGrid({ currentMonth, selectedDate, eventsByDate, onSelectDate }
                 </span>
               ))}
             </div>
-          </button>
+          </div>
         );
       })}
     </div>
