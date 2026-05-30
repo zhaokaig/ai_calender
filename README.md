@@ -94,16 +94,17 @@ npm run build
 
 PR 3 adds a text-in, action-out agent endpoint. The frontend should send text produced by browser speech recognition or by the backend ASR endpoint.
 
-OpenAI configuration:
+Configuration lives in `backend/.env`, so you do not need to export variables manually. Replace the placeholder key before running ASR or model-backed parsing:
 
-```bash
-export OPENAI_API_KEY="your-api-key"
-export ASR_MODEL="qwen3-asr-flash-2026-02-10"
-export AGENT_MODEL="gpt-4o-mini"
+```env
+DASHSCOPE_API_KEY=your-bailian-api-key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ASR_MODEL=qwen3-asr-flash-2026-02-10
+AGENT_MODEL=qwen-plus
 ```
 
-The backend uses OpenAI Audio Transcriptions for ASR, LangChain for model calls, and LangGraph for agent orchestration.
-If no `OPENAI_API_KEY` is configured, `/api/voice-command` uses a small rule-based fallback for the demo script. `/api/transcriptions` requires `OPENAI_API_KEY`.
+The backend uses Alibaba Cloud Model Studio / DashScope OpenAI-compatible APIs, LangChain for model calls, and LangGraph for agent orchestration.
+If no valid `DASHSCOPE_API_KEY` is configured, `/api/voice-command` uses a small rule-based fallback for the demo script. `/api/transcriptions` requires `DASHSCOPE_API_KEY`.
 
 Example flow:
 
@@ -122,7 +123,7 @@ curl -X POST http://127.0.0.1:5000/api/voice-command \
   -d '{"text":"明天下午三点和 Alex 开会","timezone":"Asia/Shanghai"}'
 ```
 
-To transcribe audio with OpenAI ASR:
+To transcribe audio with Qwen ASR:
 
 ```bash
 curl -X POST http://127.0.0.1:5000/api/transcriptions \

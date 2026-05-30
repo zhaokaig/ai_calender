@@ -53,6 +53,7 @@ def _parse_with_langchain(text: str, timezone: str) -> ActionPlan:
         model=current_app.config["AGENT_MODEL"],
         temperature=current_app.config["AGENT_TEMPERATURE"],
         api_key=current_app.config["OPENAI_API_KEY"],
+        base_url=current_app.config["OPENAI_BASE_URL"],
     )
     response = model.bind(response_format={"type": "json_object"}).invoke(
         [

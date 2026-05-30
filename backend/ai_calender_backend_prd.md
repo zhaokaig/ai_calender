@@ -87,7 +87,8 @@
 - Python + Flask 或 FastAPI；
 - SQLite；
 - Werkzeug password hash；
-- OpenAI Audio Transcriptions API；
+- 阿里云百炼 DashScope OpenAI 兼容 API；
+- Qwen3-ASR-Flash；
 - LangChain；
 - LangGraph；
 - OpenAI 文本模型；
@@ -171,7 +172,7 @@
 | `POST` | `/api/events` | 创建事件 |
 | `PATCH` | `/api/events/{id}` | 修改事件 |
 | `DELETE` | `/api/events/{id}` | 删除事件 |
-| `POST` | `/api/transcriptions` | 上传音频并通过 OpenAI ASR 转写文本 |
+| `POST` | `/api/transcriptions` | 上传音频并通过 Qwen3-ASR-Flash 转写文本 |
 | `POST` | `/api/voice-command` | 处理自然语言指令并执行 |
 
 所有日程 API 都需要携带：
