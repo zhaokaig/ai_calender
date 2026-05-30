@@ -2,9 +2,12 @@
 
 ## 1. PR3 目标
 
-PR3 负责把语音转文字后的文本转换为可执行的日程操作。
+PR3 负责把音频或语音转文字后的文本转换为可执行的日程操作。
 
-本 PR 的输入不是原始音频，而是前端已经完成语音识别后的文本：
+PR3 支持两种输入：
+
+1. 前端上传音频，后端调用 OpenAI ASR 转成文本；
+2. 前端已经完成语音识别，直接提交文本。
 
 ```json
 {
@@ -17,15 +20,20 @@ PR3 需要交付：
 
 - 意图识别；
 - 日程 action plan 生成；
-- 工具执行；
+- LangGraph 工具执行编排；
+- LangChain + OpenAI action plan 生成；
+- OpenAI ASR 音频转写；
 - 自然语言结果回复；
+- `/api/transcriptions` 接口；
 - `/api/voice-command` 接口。
 
 ## 2. Agent 链路
 
 ```mermaid
 flowchart TD
-  A["Input Text"] --> B["Node 1: Intent Router"]
+  Z["Audio File"] --> Y["OpenAI ASR"]
+  Y --> A["Input Text"]
+  A --> B["Node 1: Intent Router"]
   B -->|calendar| C["Node 2: Action Planner"]
   B -->|non_calendar| D["Chat Fallback"]
   C --> E["Node 3: Tool Executor"]
@@ -57,7 +65,9 @@ flowchart TD
 - 永远返回 `actions` 数组；
 - 当前 MVP 只执行第一条 action；
 - 数据结构预留未来一句话多条指令；
-- LLM 只负责理解和规划，不直接写数据库。
+- LangChain 调用 OpenAI 模型生成 action plan；
+- LLM 只负责理解和规划，不直接写数据库；
+- 如果未配置 `OPENAI_API_KEY`，后端使用规则 fallback 保证 demo 可跑。
 
 Action plan 示例：
 
@@ -136,6 +146,26 @@ Response Composer 不修改数据库，只根据结构化结果生成：
 }
 ```
 
+## 8. `/api/transcriptions` 响应结构
+
+请求：
+
+```text
+POST /api/transcriptions
+Content-Type: multipart/form-data
+Authorization: Bearer <token>
+
+file=<audio file>
+```
+
+响应：
+
+```json
+{
+  "text": "明天下午三点和 Alex 开会"
+}
+```
+
 状态值：
 
 - `success`；
@@ -144,18 +174,24 @@ Response Composer 不修改数据库，只根据结构化结果生成：
 - `unsupported`；
 - `error`。
 
-## 8. PR3 非目标
+## 9. PR3 非目标
 
 PR3 不实现：
 
-- 音频转文字；
 - 一句话多操作的执行；
 - 多轮对话记忆；
 - 单次循环实例修改；
 - 团队日历；
 - 前端页面。
 
-## 9. Commit 规划
+## 10. 技术栈
+
+- OpenAI Audio Transcriptions API：音频转文字；
+- LangChain：调用 OpenAI 文本模型生成 action plan；
+- LangGraph：编排 intent router、action planner、tool executor、response composer；
+- Flask：提供 HTTP API。
+
+## 11. Commit 规划
 
 所有 commit message 使用 Angular 风格：
 
@@ -164,4 +200,5 @@ PR3 不实现：
 3. `feat - add llm command parser`
 4. `feat - add voice command executor`
 5. `feat - add voice command api`
-6. `fix - handle ambiguous event matches`
+6. `feat - add openai audio transcription api`
+7. `refactor - orchestrate voice command with langgraph`
