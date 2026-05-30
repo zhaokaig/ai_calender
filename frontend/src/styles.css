@@ -456,6 +456,10 @@ h2 {
   line-height: 1.45;
 }
 
+.message p {
+  margin: 0;
+}
+
 .message.assistant {
   align-self: flex-start;
   color: #263247;
@@ -466,6 +470,62 @@ h2 {
   align-self: flex-end;
   color: #ffffff;
   background: #2a62d6;
+}
+
+.voice-result-block,
+.voice-result-summary {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.voice-result-block span,
+.result-meta span {
+  color: #65738a;
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.voice-result-block strong {
+  overflow-wrap: anywhere;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.result-meta span {
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #ffffff;
+}
+
+.result-events {
+  display: grid;
+  gap: 6px;
+}
+
+.result-event {
+  display: grid;
+  gap: 2px;
+  border-left: 3px solid #2a62d6;
+  padding-left: 8px;
+}
+
+.result-event strong {
+  overflow-wrap: anywhere;
+}
+
+.result-event span,
+.result-events em {
+  color: #65738a;
+  font-size: 0.78rem;
+}
+
+.result-events em {
+  font-style: normal;
 }
 
 .input-actions {

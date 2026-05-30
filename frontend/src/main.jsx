@@ -502,11 +502,16 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
 
     try {
       const transcribed = await transcribeAudio(audioBlob, mimeType, token);
-      await runVoiceCommand(transcribed.text, token);
+      const commandResult = await runVoiceCommand(transcribed.text, token);
       await onCommandComplete();
       setMessages((current) => [
         ...current,
-        { role: "assistant", text: "后端处理完成，日历已刷新。" },
+        {
+          role: "assistant",
+          text: commandResult.message || "后端处理完成，日历已刷新。",
+          transcript: transcribed.text,
+          result: commandResult,
+        },
       ]);
     } catch (error) {
       if (error.status === 401) {
@@ -535,7 +540,14 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       <div className="message-list">
         {messages.map((message, index) => (
           <div className={`message ${message.role}`} key={`${message.role}-${index}`}>
-            {message.text}
+            <p>{message.text}</p>
+            {message.transcript ? (
+              <div className="voice-result-block">
+                <span>识别文本</span>
+                <strong>{message.transcript}</strong>
+              </div>
+            ) : null}
+            {message.result ? <VoiceResultSummary result={message.result} /> : null}
           </div>
         ))}
       </div>
@@ -574,6 +586,31 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
         </p>
       ) : null}
     </section>
+  );
+}
+
+function VoiceResultSummary({ result }) {
+  const relatedEvents = [...(result.events || []), ...(result.candidates || [])];
+
+  return (
+    <div className="voice-result-summary">
+      <div className="result-meta">
+        <span>{result.intent || "unknown"}</span>
+        <span>{result.status || "unknown"}</span>
+      </div>
+
+      {relatedEvents.length > 0 ? (
+        <div className="result-events">
+          {relatedEvents.slice(0, 3).map((eventItem) => (
+            <div className="result-event" key={`${eventItem.id}-${eventItem.start_time}`}>
+              <strong>{eventItem.title}</strong>
+              {eventItem.start_time ? <span>{formatVoiceResultTime(eventItem)}</span> : null}
+            </div>
+          ))}
+          {relatedEvents.length > 3 ? <em>还有 {relatedEvents.length - 3} 个结果</em> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -873,6 +910,25 @@ function formatTimeRange(eventItem) {
     hour: "2-digit",
     minute: "2-digit",
   });
+  const end = new Date(eventItem.end_time).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${start} - ${end}`;
+}
+
+function formatVoiceResultTime(eventItem) {
+  const start = new Date(eventItem.start_time).toLocaleString("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  if (!eventItem.end_time) {
+    return start;
+  }
+
   const end = new Date(eventItem.end_time).toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
