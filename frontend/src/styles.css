@@ -572,6 +572,30 @@ h2 {
   background: currentColor;
 }
 
+.text-command-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.text-command-form input {
+  min-height: 42px;
+}
+
+.text-command-form button {
+  min-height: 42px;
+  border: 1px solid #d7deea;
+  border-radius: 7px;
+  color: #ffffff;
+  background: #2a62d6;
+}
+
+.text-command-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
 .recording-status {
   margin: 10px 0 0;
   color: #65738a;
