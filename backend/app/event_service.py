@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from .database import get_db
 from .logging_config import get_logger
@@ -182,8 +182,8 @@ def _expand_event(event: dict, range_start: datetime, range_end: datetime) -> li
     occurrence_start = start_time
     occurrence_end = end_time
 
-    while _to_comparable_datetime(occurrence_start) < _to_comparable_datetime(range_end):
-        if recurrence_until and _to_comparable_datetime(occurrence_start) > _to_comparable_datetime(recurrence_until):
+    while _to_comparable_datetime(occurrence_start, range_start) < _to_comparable_datetime(range_end, range_start):
+        if recurrence_until and _to_comparable_datetime(occurrence_start, range_start) > _to_comparable_datetime(recurrence_until, range_start):
             break
 
         if _overlaps(occurrence_start, occurrence_end, range_start, range_end):
@@ -263,8 +263,8 @@ def _add_months(value: datetime, months: int) -> datetime:
 
 def _overlaps(start_time: datetime, end_time: datetime, range_start: datetime, range_end: datetime) -> bool:
     return (
-        _to_comparable_datetime(start_time) < _to_comparable_datetime(range_end)
-        and _to_comparable_datetime(end_time) > _to_comparable_datetime(range_start)
+        _to_comparable_datetime(start_time, range_start) < _to_comparable_datetime(range_end, range_start)
+        and _to_comparable_datetime(end_time, range_start) > _to_comparable_datetime(range_start, range_start)
     )
 
 
@@ -283,12 +283,22 @@ def _validate_recurrence(
     if recurrence_type == "none" and recurrence_until is not None:
         raise ValueError("recurrence_until is only allowed for recurring events")
 
-    if recurrence_until and _to_comparable_datetime(recurrence_until) < _to_comparable_datetime(start_time):
+    if recurrence_until and _to_comparable_datetime(recurrence_until, start_time) < _to_comparable_datetime(start_time, start_time):
         raise ValueError("recurrence_until must be after start_time")
 
 
-def _to_comparable_datetime(value: datetime) -> datetime:
+def _to_comparable_datetime(value: datetime, reference: datetime | None = None) -> datetime:
+    if reference and _is_aware(reference):
+        if _is_aware(value):
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+        return value
+
     return value.replace(tzinfo=None)
+
+
+def _is_aware(value: datetime) -> bool:
+    return value.tzinfo is not None and value.utcoffset() is not None
 
 
 def _required_text(data: dict, key: str) -> str:
