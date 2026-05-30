@@ -74,15 +74,25 @@ def _parse_with_langchain(text: str, timezone: str) -> ActionPlan:
 
 
 def _parse_with_rules(text: str, timezone: str) -> ActionPlan:
-    action_type = _detect_action_type(text)
-    action_arguments = _extract_arguments(text, timezone, action_type)
-    logger.info("parser_rules_success action_type=%s", action_type)
+    segments = _split_command_segments(text)
+    actions = []
+    context = _extract_context(text)
+
+    for segment in segments:
+        contextual_segment = _apply_context(segment, context)
+        action_type = _detect_action_type(contextual_segment)
+        action_arguments = _extract_arguments(contextual_segment, timezone, action_type)
+        actions.append(CalendarAction(type=action_type, arguments=action_arguments, confidence=0.6))
+
+    logger.info(
+        "parser_rules_success action_count=%s action_types=%s",
+        len(actions),
+        [action.type for action in actions],
+    )
 
     return ActionPlan(
         intent=CALENDAR_INTENT,
-        actions=[
-            CalendarAction(type=action_type, arguments=action_arguments, confidence=0.6)
-        ],
+        actions=actions,
     )
 
 
@@ -206,11 +216,12 @@ def _extract_date(text: str, timezone: str) -> date:
 def _extract_datetime(text: str, timezone: str) -> datetime | None:
     selected_date = _extract_date(text, timezone)
     hour = _extract_hour(text)
+    minute = _extract_minute(text)
 
     if hour is None:
         return None
 
-    return datetime.combine(selected_date, time(hour=hour), tzinfo=ZoneInfo(timezone))
+    return datetime.combine(selected_date, time(hour=hour, minute=minute), tzinfo=ZoneInfo(timezone))
 
 
 def _extract_update_time(text: str, timezone: str, original_time: datetime | None) -> datetime | None:
@@ -229,7 +240,7 @@ def _extract_update_time(text: str, timezone: str, original_time: datetime | Non
         hour += 12
 
     selected_date = original_time.date() if original_time else _now(timezone).date()
-    return datetime.combine(selected_date, time(hour=hour), tzinfo=ZoneInfo(timezone))
+    return datetime.combine(selected_date, time(hour=hour, minute=_extract_minute(target_text)), tzinfo=ZoneInfo(timezone))
 
 
 def _extract_hour(text: str) -> int | None:
@@ -265,15 +276,27 @@ def _extract_hour(text: str) -> int | None:
     return hour
 
 
+def _extract_minute(text: str) -> int:
+    minute_match = re.search(r"\d{1,2}[点:：](\d{1,2})", text)
+
+    if minute_match:
+        return int(minute_match.group(1))
+
+    if "半" in text and re.search(r"(\d{1,2}|[一二两三四五六七八九十])点半", text):
+        return 30
+
+    return 0
+
+
 def _extract_title(text: str) -> str:
     cleaned = text
 
-    for word in ("帮我", "添加", "创建", "安排一个", "安排", "删除", "取消", "修改", "把"):
+    for word in ("帮我", "添加", "创建", "安排一个", "安排", "删除", "取消", "修改", "把", "有一个", "有个", "开"):
         cleaned = cleaned.replace(word, "")
 
     cleaned = re.sub(r"\d{4}-\d{1,2}-\d{1,2}", "", cleaned)
     cleaned = re.sub(r"\d{1,2}月\d{1,2}(日|号)?", "", cleaned)
-    cleaned = re.sub(r"(今天|明天|后天|上午|下午|晚上|每天|每周|每月|周[一二三四五六日天]?|\d{1,2}[点:：]|[一二两三四五六七八九十]点)", "", cleaned)
+    cleaned = re.sub(r"(今天|明天|后天|上午|下午|晚上|每天|每周|每月|周[一二三四五六日天]?|\d{1,2}[点:：](\d{1,2}|半)?|[一二两三四五六七八九十]点半?|取消)", "", cleaned)
     cleaned = cleaned.replace("的", "").replace("到", "").strip(" ，。,")
 
     return cleaned or "日程"
@@ -303,6 +326,12 @@ def _extract_keywords(text: str) -> list[str]:
 
         if cleaned and cleaned not in ignored:
             keywords.append(cleaned)
+
+    if "李总" in title:
+        keywords.append("李总")
+
+    if "晚饭" in title:
+        keywords.append("晚饭")
 
     return keywords
 
@@ -343,6 +372,8 @@ Schema:
 
 Rules:
 - Always use actions as a list.
+- If the user asks for multiple operations in one sentence, return one action per operation in the original order.
+- Do not merge multiple event creations/deletions/updates into one action.
 - Use ISO datetime strings with the provided timezone.
 - For create_event arguments, use title, start_time, end_time, notes, recurrence_type, recurrence_interval, recurrence_until.
 - For query_events arguments, use date or start/end plus optional keywords.
@@ -351,3 +382,43 @@ Rules:
 - selector may include date, start, end, and keywords.
 - Do not execute anything. Only plan.
 """.strip()
+
+
+def _split_command_segments(text: str) -> list[str]:
+    normalized = text.strip(" ，。,")
+    parts = re.split(r"(?:，|,|。|；|;|然后|并且|并|再)", normalized)
+    segments = [part.strip(" ，。,") for part in parts if part.strip(" ，。,")]
+
+    return segments or [normalized]
+
+
+def _extract_context(text: str) -> dict:
+    context = {}
+
+    for date_word in ("后天", "明天", "今天"):
+        if date_word in text:
+            context["date_word"] = date_word
+            break
+
+    for meridiem in ("上午", "下午", "晚上"):
+        if meridiem in text:
+            context["meridiem"] = meridiem
+            break
+
+    return context
+
+
+def _apply_context(segment: str, context: dict) -> str:
+    contextual_segment = segment
+
+    if context.get("date_word") and not any(word in contextual_segment for word in ("今天", "明天", "后天")):
+        contextual_segment = f"{context['date_word']}{contextual_segment}"
+
+    if (
+        context.get("meridiem")
+        and not any(word in contextual_segment for word in ("上午", "下午", "晚上"))
+        and _extract_hour(contextual_segment) is not None
+    ):
+        contextual_segment = f"{context['meridiem']}{contextual_segment}"
+
+    return contextual_segment

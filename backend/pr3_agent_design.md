@@ -63,8 +63,8 @@ flowchart TD
 设计原则：
 
 - 永远返回 `actions` 数组；
-- 当前 MVP 只执行第一条 action；
-- 数据结构预留未来一句话多条指令；
+- 当前 MVP 支持按顺序执行多条 action；
+- 一句话多条指令必须拆成多个 action；
 - LangChain 调用 OpenAI 模型生成 action plan；
 - LLM 只负责理解和规划，不直接写数据库；
 - 如果未配置 `OPENAI_API_KEY`，后端使用规则 fallback 保证 demo 可跑。
@@ -178,7 +178,6 @@ file=<audio file>
 
 PR3 不实现：
 
-- 一句话多操作的执行；
 - 多轮对话记忆；
 - 单次循环实例修改；
 - 团队日历；

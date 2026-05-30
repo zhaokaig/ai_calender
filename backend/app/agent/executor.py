@@ -41,9 +41,10 @@ def execute_plan(user_id: int, plan) -> AgentResponse:
     candidates = []
     response_status = SUCCESS
 
-    for action in plan.actions[:1]:
+    for index, action in enumerate(plan.actions, start=1):
         logger.info("executor_action_start user_id=%s action_type=%s", user_id, action.type)
         result = _execute_action(user_id, action)
+        result["index"] = index
         logger.info("executor_action_result user_id=%s action_type=%s status=%s", user_id, action.type, result["status"])
         results.append(result)
         events.extend(result.get("events", []))
@@ -148,9 +149,9 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     matched = []
 
     for event in events:
-        title = event["title"]
+        title = _normalize_match_text(event["title"])
 
-        if any(keyword in title for keyword in keywords):
+        if any(_normalize_match_text(keyword) in title for keyword in keywords):
             matched.append(event)
 
     candidates = matched or events
@@ -162,6 +163,10 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     )
 
     return candidates
+
+
+def _normalize_match_text(value: str) -> str:
+    return value.replace("的", "").replace(" ", "").strip()
 
 
 def _not_found_result(action_type: str) -> dict:
@@ -198,4 +203,12 @@ def _compose_message(results: list[dict]) -> str:
     if not results:
         return "我没有执行任何操作。"
 
-    return results[0]["message"]
+    if len(results) == 1:
+        return results[0]["message"]
+
+    success_count = len([result for result in results if result["status"] == SUCCESS])
+
+    if success_count == len(results):
+        return f"已完成 {success_count} 个日程操作。"
+
+    return f"已完成 {success_count} 个日程操作，另有 {len(results) - success_count} 个需要处理。"
