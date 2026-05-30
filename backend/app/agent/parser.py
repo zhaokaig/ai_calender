@@ -7,6 +7,7 @@ from flask import current_app
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from ..logging_config import get_logger
 from .schemas import (
     CALENDAR_INTENT,
     CREATE_EVENT,
@@ -19,22 +20,31 @@ from .schemas import (
     CalendarAction,
 )
 
+logger = get_logger("agent.parser")
+
 
 def parse_command(text: str, timezone: str) -> ActionPlan:
     normalized_text = text.strip()
+    logger.info("parser_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
     if not normalized_text:
+        logger.warning("parser_unclear reason=empty_text")
         return ActionPlan(intent=UNCLEAR_INTENT, reply="我没有听清楚。你可以试试说：“明天下午三点开会”。")
 
     if not _looks_calendar_related(normalized_text):
+        logger.info("parser_routed_smalltalk")
         return ActionPlan(intent=SMALLTALK_INTENT, reply="我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。")
 
     if current_app.config.get("OPENAI_API_KEY"):
         try:
-            return _parse_with_langchain(normalized_text, timezone)
+            plan = _parse_with_langchain(normalized_text, timezone)
+            logger.info("parser_langchain_success intent=%s action_count=%s", plan.intent, len(plan.actions))
+            return plan
         except Exception:
+            logger.exception("parser_langchain_failed fallback=rules")
             return _parse_with_rules(normalized_text, timezone)
 
+    logger.info("parser_rules_selected reason=missing_openai_api_key")
     return _parse_with_rules(normalized_text, timezone)
 
 
@@ -66,6 +76,7 @@ def _parse_with_langchain(text: str, timezone: str) -> ActionPlan:
 def _parse_with_rules(text: str, timezone: str) -> ActionPlan:
     action_type = _detect_action_type(text)
     action_arguments = _extract_arguments(text, timezone, action_type)
+    logger.info("parser_rules_success action_type=%s", action_type)
 
     return ActionPlan(
         intent=CALENDAR_INTENT,

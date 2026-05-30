@@ -2,11 +2,14 @@ from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 
 from .database import get_db
+from .logging_config import get_logger
 
 VALID_RECURRENCE_TYPES = {"none", "daily", "weekly", "monthly"}
+logger = get_logger("events")
 
 
 def create_event(user_id: int, data: dict) -> dict:
+    logger.info("event_create_attempt user_id=%s title=%s", user_id, data.get("title"))
     title = _required_text(data, "title")
     start_time = _required_datetime(data, "start_time")
     end_time = _optional_datetime(data, "end_time") or start_time + timedelta(hours=1)
@@ -41,10 +44,19 @@ def create_event(user_id: int, data: dict) -> dict:
     )
     db.commit()
 
-    return get_event(user_id, cursor.lastrowid)
+    event = get_event(user_id, cursor.lastrowid)
+    logger.info(
+        "event_create_success user_id=%s event_id=%s recurrence_type=%s",
+        user_id,
+        event["id"],
+        event["recurrence_type"],
+    )
+
+    return event
 
 
 def list_events(user_id: int, filters: dict) -> list[dict]:
+    logger.info("event_list_attempt user_id=%s filters=%s", user_id, dict(filters))
     range_start, range_end = _parse_query_range(filters)
     rows = get_db().execute(
         "SELECT * FROM events WHERE user_id = ? ORDER BY start_time",
@@ -55,21 +67,41 @@ def list_events(user_id: int, filters: dict) -> list[dict]:
     for row in rows:
         occurrences.extend(_expand_event(dict(row), range_start, range_end))
 
-    return sorted(occurrences, key=lambda event: event["start_time"])
+    sorted_occurrences = sorted(occurrences, key=lambda event: event["start_time"])
+    logger.info(
+        "event_list_success user_id=%s count=%s range_start=%s range_end=%s",
+        user_id,
+        len(sorted_occurrences),
+        _format_datetime(range_start),
+        _format_datetime(range_end),
+    )
+
+    return sorted_occurrences
 
 
 def get_event(user_id: int, event_id: int) -> dict | None:
+    logger.info("event_get_attempt user_id=%s event_id=%s", user_id, event_id)
     row = get_db().execute(
         "SELECT * FROM events WHERE id = ? AND user_id = ?",
         (event_id, user_id),
     ).fetchone()
-    return _serialize_event(dict(row)) if row else None
+    event = _serialize_event(dict(row)) if row else None
+    logger.info(
+        "event_get_result user_id=%s event_id=%s found=%s",
+        user_id,
+        event_id,
+        event is not None,
+    )
+
+    return event
 
 
 def update_event(user_id: int, event_id: int, data: dict) -> dict | None:
+    logger.info("event_update_attempt user_id=%s event_id=%s fields=%s", user_id, event_id, list(data.keys()))
     existing = get_event(user_id, event_id)
 
     if existing is None:
+        logger.warning("event_update_failed user_id=%s event_id=%s reason=not_found", user_id, event_id)
         return None
 
     title = _optional_text(data, "title", default=existing["title"])
@@ -118,17 +150,24 @@ def update_event(user_id: int, event_id: int, data: dict) -> dict | None:
     )
     get_db().commit()
 
-    return get_event(user_id, event_id)
+    event = get_event(user_id, event_id)
+    logger.info("event_update_success user_id=%s event_id=%s", user_id, event_id)
+
+    return event
 
 
 def delete_event(user_id: int, event_id: int) -> bool:
+    logger.info("event_delete_attempt user_id=%s event_id=%s", user_id, event_id)
     cursor = get_db().execute(
         "DELETE FROM events WHERE id = ? AND user_id = ?",
         (event_id, user_id),
     )
     get_db().commit()
 
-    return cursor.rowcount > 0
+    deleted = cursor.rowcount > 0
+    logger.info("event_delete_result user_id=%s event_id=%s deleted=%s", user_id, event_id, deleted)
+
+    return deleted
 
 
 def _expand_event(event: dict, range_start: datetime, range_end: datetime) -> list[dict]:

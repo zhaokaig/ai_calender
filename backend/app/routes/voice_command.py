@@ -2,8 +2,10 @@ from flask import Blueprint, g, jsonify, request
 
 from ..agent.graph import run_voice_command_graph
 from ..auth import login_required
+from ..logging_config import get_logger
 
 voice_command_bp = Blueprint("voice_command", __name__, url_prefix="/api")
+logger = get_logger("routes.voice_command")
 
 
 @voice_command_bp.post("/voice-command")
@@ -14,8 +16,21 @@ def voice_command_route():
     timezone = data.get("timezone", "Asia/Shanghai")
 
     if not isinstance(text, str) or not text.strip():
+        logger.warning("voice_command_failed user_id=%s reason=missing_text", g.current_user["id"])
         return jsonify({"error": "text is required"}), 400
 
+    logger.info(
+        "voice_command_received user_id=%s text_length=%s timezone=%s",
+        g.current_user["id"],
+        len(text.strip()),
+        timezone,
+    )
     response = run_voice_command_graph(g.current_user["id"], text, timezone)
+    logger.info(
+        "voice_command_finished user_id=%s status=%s intent=%s",
+        g.current_user["id"],
+        response.status,
+        response.intent,
+    )
 
     return jsonify(response.to_dict())

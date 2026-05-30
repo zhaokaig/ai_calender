@@ -2,12 +2,14 @@ from flask import Flask
 
 from .config import Config
 from .database import init_app as init_database
+from .logging_config import init_logging
 from .routes import auth_bp, events_bp, health_bp, transcriptions_bp, voice_command_bp
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
+    init_logging(app)
     init_database(app)
     app.register_blueprint(auth_bp)
     app.register_blueprint(events_bp)

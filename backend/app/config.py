@@ -11,3 +11,7 @@ class Config:
     ASR_MODEL = os.getenv("ASR_MODEL", "gpt-4o-mini-transcribe")
     AGENT_MODEL = os.getenv("AGENT_MODEL", "gpt-4o-mini")
     AGENT_TEMPERATURE = float(os.getenv("AGENT_TEMPERATURE", "0"))
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FILE_PATH = os.getenv("LOG_FILE_PATH", "instance/ai_calender.log")
+    LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", "1048576"))
+    LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "3"))
