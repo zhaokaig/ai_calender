@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarDays,
@@ -392,9 +392,23 @@ function CalendarGrid({ currentMonth, selectedDate, eventsByDate, onSelectDate }
 }
 
 function ChatPanel() {
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const stopTimerRef = useRef(null);
   const [messages, setMessages] = useState([
     { role: "assistant", text: "你好，我会在这里显示语音或文字指令的结果。" },
   ]);
+  const [recordingMode, setRecordingMode] = useState(null);
+  const [recordedAudio, setRecordedAudio] = useState(null);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(stopTimerRef.current);
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
   const addPlaceholder = (label) => {
     setMessages((current) => [
@@ -402,6 +416,82 @@ function ChatPanel() {
       { role: "user", text: label },
       { role: "assistant", text: "这个入口已经准备好，暂时还没有接入 LLM 服务。" },
     ]);
+  };
+
+  const startRecording = async (mode) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      });
+
+      mediaRecorder.addEventListener("stop", () => {
+        const mimeType = mediaRecorder.mimeType || "audio/webm";
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        stream.getTracks().forEach((track) => track.stop());
+        setRecordedAudio({
+          blob: audioBlob,
+          mode,
+          mimeType,
+          recordedAt: new Date(),
+        });
+        setRecordingMode(null);
+        setMessages((current) => [
+          ...current,
+          { role: "user", text: mode === "short" ? "短录音已完成" : "长录音已完成" },
+          { role: "assistant", text: "录音已保存，下一步会发送给后端处理。" },
+        ]);
+      });
+
+      mediaRecorder.start();
+      setRecordingMode(mode);
+      setRecordedAudio(null);
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: mode === "short" ? "短录音开始，15 秒后会自动停止。" : "长录音开始，再次点击可停止。" },
+      ]);
+
+      if (mode === "short") {
+        stopTimerRef.current = window.setTimeout(stopRecording, 15000);
+      }
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: `无法开始录音：${error.message}` },
+      ]);
+    }
+  };
+
+  const stopRecording = () => {
+    window.clearTimeout(stopTimerRef.current);
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder?.state === "recording") {
+      recorder.stop();
+    }
+  };
+
+  const handleRecordingButton = (mode) => {
+    if (recordingMode === mode) {
+      stopRecording();
+      return;
+    }
+
+    if (recordingMode) {
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: "请先停止当前录音。" },
+      ]);
+      return;
+    }
+
+    startRecording(mode);
   };
 
   return (
@@ -422,19 +512,35 @@ function ChatPanel() {
       </div>
 
       <div className="input-actions">
-        <button type="button" title="短录音" onClick={() => addPlaceholder("短录音")}>
+        <button
+          className={recordingMode === "short" ? "recording" : ""}
+          type="button"
+          title="短录音"
+          onClick={() => handleRecordingButton("short")}
+        >
           <Mic size={18} aria-hidden="true" />
-          短录音
+          {recordingMode === "short" ? "停止" : "短录音"}
         </button>
-        <button type="button" onClick={() => addPlaceholder("长录音")}>
+        <button
+          className={recordingMode === "long" ? "recording" : ""}
+          type="button"
+          onClick={() => handleRecordingButton("long")}
+        >
           <Mic size={18} aria-hidden="true" />
-          长录音
+          {recordingMode === "long" ? "停止" : "长录音"}
         </button>
         <button type="button" onClick={() => addPlaceholder("键盘输入")}>
           <Keyboard size={18} aria-hidden="true" />
           键盘
         </button>
       </div>
+
+      {recordedAudio ? (
+        <p className="recording-status">
+          最近录音：{recordedAudio.mode === "short" ? "短录音" : "长录音"}，
+          {Math.max(1, Math.round(recordedAudio.blob.size / 1024))} KB
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -483,6 +483,18 @@ h2 {
   white-space: nowrap;
 }
 
+.input-actions button.recording {
+  border-color: #f2b8b5;
+  color: #b42318;
+  background: #fff4f2;
+}
+
+.recording-status {
+  margin: 10px 0 0;
+  color: #65738a;
+  font-size: 0.82rem;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
