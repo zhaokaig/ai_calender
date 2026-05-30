@@ -326,7 +326,7 @@ function CalendarPage({ token, user, onLogout }) {
             </div>
           </section>
 
-          <ChatPanel />
+          <ChatPanel token={token} onUnauthorized={onLogout} onCommandComplete={loadEvents} />
         </aside>
       </section>
 
@@ -391,7 +391,7 @@ function CalendarGrid({ currentMonth, selectedDate, eventsByDate, onSelectDate }
   );
 }
 
-function ChatPanel() {
+function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const stopTimerRef = useRef(null);
@@ -400,6 +400,7 @@ function ChatPanel() {
   ]);
   const [recordingMode, setRecordingMode] = useState(null);
   const [recordedAudio, setRecordedAudio] = useState(null);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -442,11 +443,7 @@ function ChatPanel() {
           recordedAt: new Date(),
         });
         setRecordingMode(null);
-        setMessages((current) => [
-          ...current,
-          { role: "user", text: mode === "short" ? "短录音已完成" : "长录音已完成" },
-          { role: "assistant", text: "录音已保存，下一步会发送给后端处理。" },
-        ]);
+        processRecordedAudio(audioBlob, mimeType, mode);
       });
 
       mediaRecorder.start();
@@ -494,6 +491,38 @@ function ChatPanel() {
     startRecording(mode);
   };
 
+  const processRecordedAudio = async (audioBlob, mimeType, mode) => {
+    const label = mode === "short" ? "短录音" : "长录音";
+    setIsProcessingAudio(true);
+    setMessages((current) => [
+      ...current,
+      { role: "user", text: `${label}已完成` },
+      { role: "assistant", text: "正在发送录音到后端处理..." },
+    ]);
+
+    try {
+      const transcribed = await transcribeAudio(audioBlob, mimeType, token);
+      await runVoiceCommand(transcribed.text, token);
+      await onCommandComplete();
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: "后端处理完成，日历已刷新。" },
+      ]);
+    } catch (error) {
+      if (error.status === 401) {
+        onUnauthorized();
+        return;
+      }
+
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: `录音处理失败：${error.message}` },
+      ]);
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  };
+
   return (
     <section className="chat-panel">
       <div className="panel-title-row">
@@ -516,6 +545,7 @@ function ChatPanel() {
           className={recordingMode === "short" ? "recording" : ""}
           type="button"
           title="短录音"
+          disabled={isProcessingAudio}
           onClick={() => handleRecordingButton("short")}
         >
           <Mic size={18} aria-hidden="true" />
@@ -524,12 +554,13 @@ function ChatPanel() {
         <button
           className={recordingMode === "long" ? "recording" : ""}
           type="button"
+          disabled={isProcessingAudio}
           onClick={() => handleRecordingButton("long")}
         >
           <Mic size={18} aria-hidden="true" />
           {recordingMode === "long" ? "停止" : "长录音"}
         </button>
-        <button type="button" onClick={() => addPlaceholder("键盘输入")}>
+        <button type="button" disabled={isProcessingAudio} onClick={() => addPlaceholder("键盘输入")}>
           <Keyboard size={18} aria-hidden="true" />
           键盘
         </button>
@@ -539,6 +570,7 @@ function ChatPanel() {
         <p className="recording-status">
           最近录音：{recordedAudio.mode === "short" ? "短录音" : "长录音"}，
           {Math.max(1, Math.round(recordedAudio.blob.size / 1024))} KB
+          {isProcessingAudio ? "，处理中" : ""}
         </p>
       ) : null}
     </section>
@@ -732,6 +764,40 @@ async function apiRequest(path, { method = "GET", body, token } = {}) {
   }
 
   return payload;
+}
+
+async function transcribeAudio(audioBlob, mimeType, token) {
+  const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+  const formData = new FormData();
+  formData.append("file", audioBlob, `recording.${extension}`);
+
+  const response = await fetch(`${API_BASE_URL}/api/transcriptions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(payload.error || "录音转写失败");
+    error.status = response.status;
+    throw error;
+  }
+
+  return payload;
+}
+
+function runVoiceCommand(text, token) {
+  return apiRequest("/api/voice-command", {
+    method: "POST",
+    token,
+    body: {
+      text,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+    },
+  });
 }
 
 function getMonthRange(monthDate) {
