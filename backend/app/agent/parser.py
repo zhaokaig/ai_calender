@@ -180,6 +180,23 @@ def _looks_calendar_related(text: str) -> bool:
 
 def _extract_date(text: str, timezone: str) -> date:
     selected_date = _now(timezone).date()
+    iso_match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+
+    if iso_match:
+        return date(
+            int(iso_match.group(1)),
+            int(iso_match.group(2)),
+            int(iso_match.group(3)),
+        )
+
+    chinese_date_match = re.search(r"(\d{1,2})月(\d{1,2})(日|号)?", text)
+
+    if chinese_date_match:
+        return date(
+            selected_date.year,
+            int(chinese_date_match.group(1)),
+            int(chinese_date_match.group(2)),
+        )
 
     if "后天" in text:
         return selected_date + timedelta(days=2)
@@ -258,6 +275,8 @@ def _extract_title(text: str) -> str:
     for word in ("帮我", "添加", "创建", "安排一个", "安排", "删除", "取消", "修改", "把"):
         cleaned = cleaned.replace(word, "")
 
+    cleaned = re.sub(r"\d{4}-\d{1,2}-\d{1,2}", "", cleaned)
+    cleaned = re.sub(r"\d{1,2}月\d{1,2}(日|号)?", "", cleaned)
     cleaned = re.sub(r"(今天|明天|后天|上午|下午|晚上|每天|每周|每月|周[一二三四五六日天]?|\d{1,2}[点:：]|[一二两三四五六七八九十]点)", "", cleaned)
     cleaned = cleaned.replace("的", "").replace("到", "").strip(" ，。,")
 
