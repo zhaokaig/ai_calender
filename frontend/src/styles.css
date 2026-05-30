@@ -544,17 +544,64 @@ h2 {
 
 .input-actions button {
   min-width: 0;
+  aspect-ratio: 1;
   border-color: #d7deea;
   color: #344054;
   background: #ffffff;
-  padding: 0 8px;
-  white-space: nowrap;
+  padding: 0;
 }
 
 .input-actions button.recording {
   border-color: #f2b8b5;
   color: #b42318;
   background: #fff4f2;
+}
+
+.record-icon {
+  width: 21px;
+  height: 21px;
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.record-stop {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.text-command-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.text-command-form input {
+  min-height: 42px;
+}
+
+.text-command-form button {
+  min-height: 42px;
+  border: 1px solid #d7deea;
+  border-radius: 7px;
+  color: #ffffff;
+  background: #2a62d6;
+}
+
+.text-command-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
 }
 
 .recording-status {

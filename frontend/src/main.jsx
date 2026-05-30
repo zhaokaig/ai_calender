@@ -9,6 +9,7 @@ import {
   Mic,
   Plus,
   Save,
+  Send,
   Trash2,
   X,
 } from "lucide-react";
@@ -400,6 +401,8 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
   const [recordingMode, setRecordingMode] = useState(null);
   const [recordedAudio, setRecordedAudio] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [isTextInputOpen, setIsTextInputOpen] = useState(false);
+  const [textCommand, setTextCommand] = useState("");
 
   useEffect(() => {
     return () => {
@@ -409,14 +412,6 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       }
     };
   }, []);
-
-  const addPlaceholder = (label) => {
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: label },
-      { role: "assistant", text: "这个入口已经准备好，暂时还没有接入 LLM 服务。" },
-    ]);
-  };
 
   const startRecording = async (mode) => {
     try {
@@ -450,12 +445,8 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       setRecordedAudio(null);
       setMessages((current) => [
         ...current,
-        { role: "assistant", text: mode === "short" ? "短录音开始，15 秒后会自动停止。" : "长录音开始，再次点击可停止。" },
+        { role: "assistant", text: mode === "short" ? "按住录音中，松开后发送。" : "长录音开始，再次点击可停止。" },
       ]);
-
-      if (mode === "short") {
-        stopTimerRef.current = window.setTimeout(stopRecording, 15000);
-      }
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -473,7 +464,9 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
   };
 
-  const handleRecordingButton = (mode) => {
+  const handleLongRecordingButton = () => {
+    const mode = "long";
+
     if (recordingMode === mode) {
       stopRecording();
       return;
@@ -488,6 +481,20 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
 
     startRecording(mode);
+  };
+
+  const handleShortRecordingStart = () => {
+    if (recordingMode || isProcessingAudio) {
+      return;
+    }
+
+    startRecording("short");
+  };
+
+  const handleShortRecordingEnd = () => {
+    if (recordingMode === "short") {
+      stopRecording();
+    }
   };
 
   const processRecordedAudio = async (audioBlob, mimeType, mode) => {
@@ -527,6 +534,49 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
   };
 
+  const submitTextCommand = async (event) => {
+    event.preventDefault();
+    const commandText = textCommand.trim();
+
+    if (!commandText) {
+      return;
+    }
+
+    setIsProcessingAudio(true);
+    setTextCommand("");
+    setMessages((current) => [
+      ...current,
+      { role: "user", text: commandText },
+      { role: "assistant", text: "正在发送文字指令到后端处理..." },
+    ]);
+
+    try {
+      const commandResult = await runVoiceCommand(commandText, token);
+      await onCommandComplete();
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: commandResult.message || "后端处理完成，日历已刷新。",
+          transcript: commandText,
+          result: commandResult,
+        },
+      ]);
+    } catch (error) {
+      if (error.status === 401) {
+        onUnauthorized();
+        return;
+      }
+
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: `文字指令处理失败：${error.message}` },
+      ]);
+    } finally {
+      setIsProcessingAudio(false);
+    }
+  };
+
   return (
     <section className="chat-panel">
       <div className="panel-title-row">
@@ -556,26 +606,50 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           className={recordingMode === "short" ? "recording" : ""}
           type="button"
           title="短录音"
+          aria-label={recordingMode === "short" ? "停止短录音" : "短录音"}
           disabled={isProcessingAudio}
-          onClick={() => handleRecordingButton("short")}
+          onMouseDown={handleShortRecordingStart}
+          onMouseLeave={handleShortRecordingEnd}
+          onMouseUp={handleShortRecordingEnd}
+          onTouchEnd={handleShortRecordingEnd}
+          onTouchStart={handleShortRecordingStart}
         >
-          <Mic size={18} aria-hidden="true" />
-          {recordingMode === "short" ? "停止" : "短录音"}
+          <Mic size={20} aria-hidden="true" />
         </button>
         <button
           className={recordingMode === "long" ? "recording" : ""}
           type="button"
+          title={recordingMode === "long" ? "停止长录音" : "长录音"}
+          aria-label={recordingMode === "long" ? "停止长录音" : "长录音"}
           disabled={isProcessingAudio}
-          onClick={() => handleRecordingButton("long")}
+          onClick={handleLongRecordingButton}
         >
-          <Mic size={18} aria-hidden="true" />
-          {recordingMode === "long" ? "停止" : "长录音"}
+          <RecordIcon isRecording={recordingMode === "long"} />
         </button>
-        <button type="button" disabled={isProcessingAudio} onClick={() => addPlaceholder("键盘输入")}>
-          <Keyboard size={18} aria-hidden="true" />
-          键盘
+        <button
+          type="button"
+          title="键盘输入"
+          aria-label="键盘输入"
+          disabled={isProcessingAudio}
+          onClick={() => setIsTextInputOpen((isOpen) => !isOpen)}
+        >
+          <Keyboard size={20} aria-hidden="true" />
         </button>
       </div>
+
+      {isTextInputOpen ? (
+        <form className="text-command-form" onSubmit={submitTextCommand}>
+          <input
+            aria-label="文字指令"
+            value={textCommand}
+            onChange={(event) => setTextCommand(event.target.value)}
+            placeholder="输入日程指令"
+          />
+          <button type="submit" aria-label="发送文字指令" disabled={isProcessingAudio || !textCommand.trim()}>
+            <Send size={18} aria-hidden="true" />
+          </button>
+        </form>
+      ) : null}
 
       {recordedAudio ? (
         <p className="recording-status">
@@ -585,6 +659,14 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
         </p>
       ) : null}
     </section>
+  );
+}
+
+function RecordIcon({ isRecording }) {
+  return (
+    <span className="record-icon" aria-hidden="true">
+      <span className={isRecording ? "record-stop" : "record-dot"} />
+    </span>
   );
 }
 
