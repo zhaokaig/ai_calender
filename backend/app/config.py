@@ -8,7 +8,7 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     ACCESS_TOKEN_MAX_AGE = int(os.getenv("ACCESS_TOKEN_MAX_AGE", "604800"))
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    ASR_MODEL = os.getenv("ASR_MODEL", "gpt-4o-mini-transcribe")
+    ASR_MODEL = os.getenv("ASR_MODEL", "qwen3-asr-flash-2026-02-10")
     AGENT_MODEL = os.getenv("AGENT_MODEL", "gpt-4o-mini")
     AGENT_TEMPERATURE = float(os.getenv("AGENT_TEMPERATURE", "0"))
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

@@ -98,7 +98,7 @@ OpenAI configuration:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
-export ASR_MODEL="gpt-4o-mini-transcribe"
+export ASR_MODEL="qwen3-asr-flash-2026-02-10"
 export AGENT_MODEL="gpt-4o-mini"
 ```
 
