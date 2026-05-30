@@ -106,10 +106,20 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         }
 
     if action.type == DELETE_EVENT:
-        candidates = _find_candidates(user_id, action.arguments.get("selector", {}))
+        selector = action.arguments.get("selector", {})
+        candidates = _find_candidates(user_id, selector)
 
         if not candidates:
             return _not_found_result(action.type)
+
+        if selector.get("all") is True:
+            deleted_events = _delete_all_candidates(user_id, candidates)
+            return {
+                "action": action.type,
+                "status": SUCCESS,
+                "message": f"已删除 {len(deleted_events)} 个日程。",
+                "events": deleted_events,
+            }
 
         if len(candidates) > 1:
             return _needs_selection_result(action.type, candidates)
@@ -129,6 +139,25 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
     }
 
 
+def _delete_all_candidates(user_id: int, candidates: list[dict]) -> list[dict]:
+    deleted_events = []
+    deleted_series_ids = set()
+
+    for candidate in candidates:
+        event_id = candidate["series_id"]
+
+        if event_id in deleted_series_ids:
+            continue
+
+        delete_event(user_id, event_id)
+        deleted_series_ids.add(event_id)
+        deleted_events.append(candidate)
+
+    logger.info("executor_delete_all_result user_id=%s deleted_count=%s", user_id, len(deleted_events))
+
+    return deleted_events
+
+
 def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     logger.info("executor_find_candidates user_id=%s selector=%s", user_id, selector)
     filters = {}
@@ -140,6 +169,10 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
         filters["date"] = selector["date"]
 
     events = list_events(user_id, filters)
+    if selector.get("all") is True:
+        logger.info("executor_candidates_result user_id=%s count=%s delete_all=true", user_id, len(events))
+        return events
+
     keywords = [keyword for keyword in selector.get("keywords", []) if keyword]
 
     if not keywords:

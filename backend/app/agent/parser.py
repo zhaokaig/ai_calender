@@ -151,6 +151,10 @@ def _extract_arguments(text: str, timezone: str, action_type: str) -> dict:
         selector["end"] = (start_time + timedelta(hours=1)).isoformat()
 
     if action_type == DELETE_EVENT:
+        if _is_delete_all_day(text):
+            selector["all"] = True
+            selector["keywords"] = []
+
         return {"selector": selector}
 
     updates = {}
@@ -190,6 +194,27 @@ def _looks_calendar_related(text: str) -> bool:
         "查询",
     )
     return any(keyword in text for keyword in keywords)
+
+
+def _is_delete_all_day(text: str) -> bool:
+    if not any(keyword in text for keyword in ("删除", "取消", "删掉", "清空")):
+        return False
+
+    return any(
+        keyword in text
+        for keyword in (
+            "所有",
+            "全部",
+            "整天",
+            "一整天",
+            "当天",
+            "这天",
+            "这一天",
+            "那天",
+            "那一天",
+            "一天的",
+        )
+    )
 
 
 def _extract_date(text: str, timezone: str) -> date:
@@ -412,7 +437,8 @@ Rules:
 - For query_events arguments, use date or start/end plus optional keywords.
 - For update_event arguments, use selector and updates.
 - For delete_event arguments, use selector.
-- selector may include date, start, end, and keywords.
+- selector may include date, start, end, keywords, and all.
+- If the user clearly asks to delete all events on a day, set selector.all to true and do not add keywords.
 - Do not execute anything. Only plan.
 """.strip()
 
