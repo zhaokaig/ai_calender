@@ -451,12 +451,8 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       setRecordedAudio(null);
       setMessages((current) => [
         ...current,
-        { role: "assistant", text: mode === "short" ? "短录音开始，15 秒后会自动停止。" : "长录音开始，再次点击可停止。" },
+        { role: "assistant", text: mode === "short" ? "按住录音中，松开后发送。" : "长录音开始，再次点击可停止。" },
       ]);
-
-      if (mode === "short") {
-        stopTimerRef.current = window.setTimeout(stopRecording, 15000);
-      }
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -474,7 +470,9 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
   };
 
-  const handleRecordingButton = (mode) => {
+  const handleLongRecordingButton = () => {
+    const mode = "long";
+
     if (recordingMode === mode) {
       stopRecording();
       return;
@@ -489,6 +487,20 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
 
     startRecording(mode);
+  };
+
+  const handleShortRecordingStart = () => {
+    if (recordingMode || isProcessingAudio) {
+      return;
+    }
+
+    startRecording("short");
+  };
+
+  const handleShortRecordingEnd = () => {
+    if (recordingMode === "short") {
+      stopRecording();
+    }
   };
 
   const processRecordedAudio = async (audioBlob, mimeType, mode) => {
@@ -559,7 +571,11 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           title="短录音"
           aria-label={recordingMode === "short" ? "停止短录音" : "短录音"}
           disabled={isProcessingAudio}
-          onClick={() => handleRecordingButton("short")}
+          onMouseDown={handleShortRecordingStart}
+          onMouseLeave={handleShortRecordingEnd}
+          onMouseUp={handleShortRecordingEnd}
+          onTouchEnd={handleShortRecordingEnd}
+          onTouchStart={handleShortRecordingStart}
         >
           <Mic size={20} aria-hidden="true" />
         </button>
@@ -569,7 +585,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           title={recordingMode === "long" ? "停止长录音" : "长录音"}
           aria-label={recordingMode === "long" ? "停止长录音" : "长录音"}
           disabled={isProcessingAudio}
-          onClick={() => handleRecordingButton("long")}
+          onClick={handleLongRecordingButton}
         >
           <Mic size={20} aria-hidden="true" />
         </button>
