@@ -28,6 +28,6 @@ def transcription_route():
         logger.error("transcription_failed filename=%s reason=asr_error", audio_file.filename)
         return jsonify({"error": str(error)}), 502
 
-    logger.info("transcription_success filename=%s text_length=%s", audio_file.filename, len(text or ""))
+    logger.info("transcription_success filename=%s text_length=%s text=%s", audio_file.filename, len(text or ""), text)
 
     return jsonify({"text": text})

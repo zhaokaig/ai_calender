@@ -38,7 +38,12 @@ def parse_command(text: str, timezone: str) -> ActionPlan:
     if current_app.config.get("OPENAI_API_KEY"):
         try:
             plan = _parse_with_langchain(normalized_text, timezone)
-            logger.info("parser_langchain_success intent=%s action_count=%s", plan.intent, len(plan.actions))
+            logger.info(
+                "parser_langchain_success intent=%s action_count=%s actions=%s",
+                plan.intent,
+                len(plan.actions),
+                [action.to_dict() for action in plan.actions],
+            )
             return plan
         except Exception:
             logger.exception("parser_langchain_failed fallback=rules")
@@ -86,9 +91,10 @@ def _parse_with_rules(text: str, timezone: str) -> ActionPlan:
         actions.append(CalendarAction(type=action_type, arguments=action_arguments, confidence=0.6))
 
     logger.info(
-        "parser_rules_success action_count=%s action_types=%s",
+        "parser_rules_success action_count=%s action_types=%s actions=%s",
         len(actions),
         [action.type for action in actions],
+        [action.to_dict() for action in actions],
     )
 
     return ActionPlan(
@@ -173,6 +179,7 @@ def _looks_calendar_related(text: str) -> bool:
         "安排",
         "提醒",
         "上午",
+        "早上",
         "下午",
         "晚上",
         "每天",
@@ -292,12 +299,31 @@ def _extract_minute(text: str) -> int:
 def _extract_title(text: str) -> str:
     cleaned = text
 
-    for word in ("帮我", "添加", "创建", "安排一个", "安排", "删除", "取消", "修改", "把", "有一个", "有个", "开"):
+    for word in (
+        "帮我",
+        "添加",
+        "创建",
+        "安排一个",
+        "安排",
+        "删除",
+        "取消",
+        "修改",
+        "把",
+        "有一个",
+        "有个",
+        "一个",
+        "开",
+        "要去",
+        "要出去",
+        "出去",
+        "要",
+        "去",
+    ):
         cleaned = cleaned.replace(word, "")
 
     cleaned = re.sub(r"\d{4}-\d{1,2}-\d{1,2}", "", cleaned)
     cleaned = re.sub(r"\d{1,2}月\d{1,2}(日|号)?", "", cleaned)
-    cleaned = re.sub(r"(今天|明天|后天|上午|下午|晚上|每天|每周|每月|周[一二三四五六日天]?|\d{1,2}[点:：](\d{1,2}|半)?|[一二两三四五六七八九十]点半?|取消)", "", cleaned)
+    cleaned = re.sub(r"(今天|明天|后天|早上|上午|下午|晚上|每天|每周|每月|周[一二三四五六日天]?|\d{1,2}[点:：](\d{1,2}|半)?钟?|[一二两三四五六七八九十]点半?钟?|取消)", "", cleaned)
     cleaned = cleaned.replace("的", "").replace("到", "").strip(" ，。,")
 
     return cleaned or "日程"
@@ -333,6 +359,12 @@ def _extract_keywords(text: str) -> list[str]:
 
     if "晚饭" in title:
         keywords.append("晚饭")
+
+    if "晚餐" in title:
+        keywords.append("晚餐")
+
+    if "吃饭" in title or "吃个饭" in title:
+        keywords.append("吃饭")
 
     return keywords
 
@@ -401,7 +433,7 @@ def _extract_context(text: str) -> dict:
             context["date_word"] = date_word
             break
 
-    for meridiem in ("上午", "下午", "晚上"):
+    for meridiem in ("早上", "上午", "下午", "晚上"):
         if meridiem in text:
             context["meridiem"] = meridiem
             break

@@ -20,10 +20,11 @@ def voice_command_route():
         return jsonify({"error": "text is required"}), 400
 
     logger.info(
-        "voice_command_received user_id=%s text_length=%s timezone=%s",
+        "voice_command_received user_id=%s text_length=%s timezone=%s text=%s",
         g.current_user["id"],
         len(text.strip()),
         timezone,
+        text.strip(),
     )
     response = run_voice_command_graph(g.current_user["id"], text, timezone)
     logger.info(
