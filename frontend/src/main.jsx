@@ -377,12 +377,11 @@ function CalendarGrid({ currentMonth, selectedDate, eventsByDate, onSelectDate }
           >
             <span className="day-number">{day.getDate()}</span>
             <div className="day-events">
-              {dateEvents.slice(0, 3).map((eventItem) => (
+              {dateEvents.map((eventItem) => (
                 <span className="event-chip" key={`${eventItem.id}-${eventItem.start_time}`}>
                   {eventItem.title}
                 </span>
               ))}
-              {dateEvents.length > 3 ? <span className="more-chip">+{dateEvents.length - 3}</span> : null}
             </div>
           </button>
         );

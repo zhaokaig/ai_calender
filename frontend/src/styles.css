@@ -346,11 +346,24 @@ h2 {
 
 .day-events {
   display: grid;
+  max-height: 78px;
   gap: 5px;
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
-.event-chip,
-.more-chip {
+.day-events::-webkit-scrollbar {
+  width: 6px;
+}
+
+.day-events::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c2ccdc;
+}
+
+.event-chip {
   overflow: hidden;
   border-radius: 5px;
   padding: 5px 7px;
@@ -360,11 +373,6 @@ h2 {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.more-chip {
-  color: #526071;
-  background: #eef2f7;
 }
 
 .side-panel {
