@@ -587,7 +587,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           disabled={isProcessingAudio}
           onClick={handleLongRecordingButton}
         >
-          <Mic size={20} aria-hidden="true" />
+          <RecordIcon isRecording={recordingMode === "long"} />
         </button>
         <button
           type="button"
@@ -608,6 +608,14 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
         </p>
       ) : null}
     </section>
+  );
+}
+
+function RecordIcon({ isRecording }) {
+  return (
+    <span className="record-icon" aria-hidden="true">
+      <span className={isRecording ? "record-stop" : "record-dot"} />
+    </span>
   );
 }
 
