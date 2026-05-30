@@ -1,7 +1,6 @@
 from flask import Blueprint, g, jsonify, request
 
-from ..agent.executor import execute_plan
-from ..agent.parser import parse_command
+from ..agent.graph import run_voice_command_graph
 from ..auth import login_required
 
 voice_command_bp = Blueprint("voice_command", __name__, url_prefix="/api")
@@ -17,7 +16,6 @@ def voice_command_route():
     if not isinstance(text, str) or not text.strip():
         return jsonify({"error": "text is required"}), 400
 
-    plan = parse_command(text, timezone)
-    response = execute_plan(g.current_user["id"], plan)
+    response = run_voice_command_graph(g.current_user["id"], text, timezone)
 
     return jsonify(response.to_dict())
