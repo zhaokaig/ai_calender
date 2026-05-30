@@ -87,7 +87,10 @@
 - Python + Flask 或 FastAPI；
 - SQLite；
 - Werkzeug password hash；
-- OpenAI API 或兼容 LLM API；
+- OpenAI Audio Transcriptions API；
+- LangChain；
+- LangGraph；
+- OpenAI 文本模型；
 - 简单 JSON schema 约束模型输出。
 
 ## 4. 核心用户流程
@@ -168,6 +171,7 @@
 | `POST` | `/api/events` | 创建事件 |
 | `PATCH` | `/api/events/{id}` | 修改事件 |
 | `DELETE` | `/api/events/{id}` | 删除事件 |
+| `POST` | `/api/transcriptions` | 上传音频并通过 OpenAI ASR 转写文本 |
 | `POST` | `/api/voice-command` | 处理自然语言指令并执行 |
 
 所有日程 API 都需要携带：
