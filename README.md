@@ -90,6 +90,46 @@ cd frontend
 npm run build
 ```
 
+## Voice Command API
+
+PR 3 adds a text-in, action-out agent endpoint. The frontend should send text produced by browser speech recognition or by the backend ASR endpoint.
+
+OpenAI configuration:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+export ASR_MODEL="gpt-4o-mini-transcribe"
+export AGENT_MODEL="gpt-4o-mini"
+```
+
+The backend uses OpenAI Audio Transcriptions for ASR, LangChain for model calls, and LangGraph for agent orchestration.
+If no `OPENAI_API_KEY` is configured, `/api/voice-command` uses a small rule-based fallback for the demo script. `/api/transcriptions` requires `OPENAI_API_KEY`.
+
+Example flow:
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"password123"}'
+```
+
+Then call:
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/voice-command \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"text":"明天下午三点和 Alex 开会","timezone":"Asia/Shanghai"}'
+```
+
+To transcribe audio with OpenAI ASR:
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/transcriptions \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/audio.webm"
+```
+
 ## MVP Demo Goal
 
 The final Hackathon demo should support:
