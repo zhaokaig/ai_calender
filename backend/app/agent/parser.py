@@ -1,11 +1,11 @@
 import json
 import re
-import urllib.error
-import urllib.request
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import current_app
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from .schemas import (
     CALENDAR_INTENT,
@@ -29,53 +29,38 @@ def parse_command(text: str, timezone: str) -> ActionPlan:
     if not _looks_calendar_related(normalized_text):
         return ActionPlan(intent=SMALLTALK_INTENT, reply="我现在主要能帮你管理日程。你可以试试说：“明天下午三点开会”。")
 
-    if current_app.config.get("LLM_API_KEY"):
+    if current_app.config.get("OPENAI_API_KEY"):
         try:
-            return _parse_with_llm(normalized_text, timezone)
-        except (ValueError, urllib.error.URLError, TimeoutError):
+            return _parse_with_langchain(normalized_text, timezone)
+        except Exception:
             return _parse_with_rules(normalized_text, timezone)
 
     return _parse_with_rules(normalized_text, timezone)
 
 
-def _parse_with_llm(text: str, timezone: str) -> ActionPlan:
-    payload = {
-        "model": current_app.config["LLM_MODEL"],
-        "temperature": 0,
-        "messages": [
-            {
-                "role": "system",
-                "content": _system_prompt(),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
+def _parse_with_langchain(text: str, timezone: str) -> ActionPlan:
+    model = ChatOpenAI(
+        model=current_app.config["AGENT_MODEL"],
+        temperature=current_app.config["AGENT_TEMPERATURE"],
+        api_key=current_app.config["OPENAI_API_KEY"],
+    )
+    response = model.bind(response_format={"type": "json_object"}).invoke(
+        [
+            SystemMessage(content=_system_prompt()),
+            HumanMessage(
+                content=json.dumps(
                     {
                         "text": text,
                         "timezone": timezone,
                         "current_date": date.today().isoformat(),
                     },
                     ensure_ascii=False,
-                ),
-            },
-        ],
-        "response_format": {"type": "json_object"},
-    }
-    request = urllib.request.Request(
-        current_app.config["LLM_API_URL"],
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {current_app.config['LLM_API_KEY']}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+                )
+            ),
+        ]
     )
 
-    with urllib.request.urlopen(request, timeout=current_app.config["LLM_TIMEOUT_SECONDS"]) as response:
-        body = json.loads(response.read().decode("utf-8"))
-
-    content = body["choices"][0]["message"]["content"]
-    return ActionPlan.from_dict(json.loads(content))
+    return ActionPlan.from_dict(json.loads(response.content))
 
 
 def _parse_with_rules(text: str, timezone: str) -> ActionPlan:
