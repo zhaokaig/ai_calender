@@ -5,6 +5,8 @@ from .database import get_db
 from .logging_config import get_logger
 
 VALID_RECURRENCE_TYPES = {"none", "daily", "weekly", "monthly"}
+EXCEPTION_CANCELLED = "cancelled"
+EXCEPTION_MODIFIED = "modified"
 logger = get_logger("events")
 
 
@@ -65,7 +67,9 @@ def list_events(user_id: int, filters: dict) -> list[dict]:
     occurrences = []
 
     for row in rows:
-        occurrences.extend(_expand_event(dict(row), range_start, range_end))
+        event = dict(row)
+        exceptions = _get_exceptions(user_id, event["id"])
+        occurrences.extend(_expand_event(event, range_start, range_end, exceptions))
 
     sorted_occurrences = sorted(occurrences, key=lambda event: event["start_time"])
     logger.info(
@@ -156,6 +160,72 @@ def update_event(user_id: int, event_id: int, data: dict) -> dict | None:
     return event
 
 
+def update_event_occurrence(user_id: int, event_id: int, occurrence_start_time: str, data: dict) -> dict | None:
+    logger.info(
+        "event_occurrence_update_attempt user_id=%s event_id=%s occurrence_start_time=%s fields=%s",
+        user_id,
+        event_id,
+        occurrence_start_time,
+        list(data.keys()),
+    )
+    event = get_event(user_id, event_id)
+
+    if event is None:
+        logger.warning("event_occurrence_update_failed user_id=%s event_id=%s reason=not_found", user_id, event_id)
+        return None
+
+    if event["recurrence_type"] == "none":
+        return update_event(user_id, event_id, data)
+
+    occurrence_start = _parse_datetime(occurrence_start_time)
+    occurrence = _build_occurrence_for_start(event, occurrence_start)
+
+    if occurrence is None:
+        raise ValueError("occurrence_start_time does not match this recurring event")
+
+    title = _optional_text(data, "title", default=occurrence["title"])
+    start_time = _optional_datetime(data, "start_time") or _parse_datetime(occurrence["start_time"])
+    end_time = _optional_datetime(data, "end_time") or _parse_datetime(occurrence["end_time"])
+
+    if end_time <= start_time:
+        raise ValueError("end_time must be after start_time")
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO event_exceptions (
+            user_id, series_id, original_start_time, exception_type,
+            title, start_time, end_time, notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, series_id, original_start_time)
+        DO UPDATE SET
+            exception_type = excluded.exception_type,
+            title = excluded.title,
+            start_time = excluded.start_time,
+            end_time = excluded.end_time,
+            notes = excluded.notes,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            user_id,
+            event_id,
+            _format_datetime(occurrence_start),
+            EXCEPTION_MODIFIED,
+            title,
+            _format_datetime(start_time),
+            _format_datetime(end_time),
+            _optional_text(data, "notes", default=occurrence["notes"]),
+        ),
+    )
+    db.commit()
+
+    updated_event = _get_exception_occurrence(user_id, event_id, occurrence_start)
+    logger.info("event_occurrence_update_success user_id=%s event_id=%s", user_id, event_id)
+
+    return updated_event
+
+
 def delete_event(user_id: int, event_id: int) -> bool:
     logger.info("event_delete_attempt user_id=%s event_id=%s", user_id, event_id)
     cursor = get_db().execute(
@@ -170,10 +240,105 @@ def delete_event(user_id: int, event_id: int) -> bool:
     return deleted
 
 
-def _expand_event(event: dict, range_start: datetime, range_end: datetime) -> list[dict]:
+def delete_event_occurrence(user_id: int, event_id: int, occurrence_start_time: str) -> dict | None:
+    logger.info(
+        "event_occurrence_delete_attempt user_id=%s event_id=%s occurrence_start_time=%s",
+        user_id,
+        event_id,
+        occurrence_start_time,
+    )
+    event = get_event(user_id, event_id)
+
+    if event is None:
+        logger.warning("event_occurrence_delete_failed user_id=%s event_id=%s reason=not_found", user_id, event_id)
+        return None
+
+    if event["recurrence_type"] == "none":
+        return event if delete_event(user_id, event_id) else None
+
+    occurrence_start = _parse_datetime(occurrence_start_time)
+    occurrence = _build_occurrence_for_start(event, occurrence_start)
+
+    if occurrence is None:
+        raise ValueError("occurrence_start_time does not match this recurring event")
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO event_exceptions (
+            user_id, series_id, original_start_time, exception_type
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, series_id, original_start_time)
+        DO UPDATE SET
+            exception_type = excluded.exception_type,
+            title = NULL,
+            start_time = NULL,
+            end_time = NULL,
+            notes = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, event_id, _format_datetime(occurrence_start), EXCEPTION_CANCELLED),
+    )
+    db.commit()
+    logger.info("event_occurrence_delete_success user_id=%s event_id=%s", user_id, event_id)
+
+    return occurrence
+
+
+def truncate_recurring_event(user_id: int, event_id: int, cutoff_start_time: str) -> dict | None:
+    logger.info(
+        "event_truncate_attempt user_id=%s event_id=%s cutoff_start_time=%s",
+        user_id,
+        event_id,
+        cutoff_start_time,
+    )
+    event = get_event(user_id, event_id)
+
+    if event is None:
+        logger.warning("event_truncate_failed user_id=%s event_id=%s reason=not_found", user_id, event_id)
+        return None
+
+    cutoff_start = _parse_datetime(cutoff_start_time)
+
+    if event["recurrence_type"] == "none":
+        return event if delete_event(user_id, event_id) else None
+
+    cutoff_until = cutoff_start - timedelta(microseconds=1)
+    start_time = _parse_datetime(event["start_time"])
+    _validate_recurrence(
+        event["recurrence_type"],
+        int(event["recurrence_interval"]),
+        cutoff_until,
+        start_time,
+    )
+
+    get_db().execute(
+        """
+        UPDATE events
+        SET recurrence_until = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND user_id = ?
+        """,
+        (_format_datetime(cutoff_until), event_id, user_id),
+    )
+    get_db().commit()
+
+    truncated_event = get_event(user_id, event_id)
+    logger.info("event_truncate_success user_id=%s event_id=%s", user_id, event_id)
+
+    return truncated_event
+
+
+def _expand_event(event: dict, range_start: datetime, range_end: datetime, exceptions: list[dict] | None = None) -> list[dict]:
     start_time = _parse_datetime(event["start_time"])
     end_time = _parse_datetime(event["end_time"])
     recurrence_until = _parse_datetime(event["recurrence_until"]) if event["recurrence_until"] else None
+    exceptions_by_start = {
+        exception["original_start_time"]: exception
+        for exception in exceptions or []
+    }
 
     if event["recurrence_type"] == "none":
         return [_serialize_occurrence(event, start_time, end_time)] if _overlaps(start_time, end_time, range_start, range_end) else []
@@ -186,7 +351,17 @@ def _expand_event(event: dict, range_start: datetime, range_end: datetime) -> li
         if recurrence_until and _to_comparable_datetime(occurrence_start, range_start) > _to_comparable_datetime(recurrence_until, range_start):
             break
 
-        if _overlaps(occurrence_start, occurrence_end, range_start, range_end):
+        original_start_time = _format_datetime(occurrence_start)
+        exception = exceptions_by_start.get(original_start_time)
+
+        if exception and exception["exception_type"] == EXCEPTION_CANCELLED:
+            pass
+        elif exception and exception["exception_type"] == EXCEPTION_MODIFIED:
+            modified = _serialize_modified_occurrence(event, exception)
+
+            if _overlaps(_parse_datetime(modified["start_time"]), _parse_datetime(modified["end_time"]), range_start, range_end):
+                occurrences.append(modified)
+        elif _overlaps(occurrence_start, occurrence_end, range_start, range_end):
             occurrences.append(_serialize_occurrence(event, occurrence_start, occurrence_end))
 
         occurrence_start = _next_occurrence(
@@ -221,8 +396,78 @@ def _serialize_occurrence(event: dict, start_time: datetime, end_time: datetime)
     serialized["end_time"] = _format_datetime(end_time)
     serialized["series_id"] = event["id"]
     serialized["is_recurring"] = event["recurrence_type"] != "none"
+    serialized["occurrence_start_time"] = _format_datetime(start_time)
+    serialized["is_exception"] = False
 
     return serialized
+
+
+def _serialize_modified_occurrence(event: dict, exception: dict) -> dict:
+    serialized = _serialize_event(event)
+    serialized["title"] = exception["title"] if exception["title"] is not None else event["title"]
+    serialized["start_time"] = exception["start_time"]
+    serialized["end_time"] = exception["end_time"]
+    serialized["notes"] = exception["notes"]
+    serialized["series_id"] = event["id"]
+    serialized["is_recurring"] = True
+    serialized["occurrence_start_time"] = exception["original_start_time"]
+    serialized["exception_id"] = exception["id"]
+    serialized["exception_type"] = exception["exception_type"]
+    serialized["is_exception"] = True
+
+    return serialized
+
+
+def _get_exceptions(user_id: int, event_id: int) -> list[dict]:
+    rows = get_db().execute(
+        """
+        SELECT *
+        FROM event_exceptions
+        WHERE user_id = ?
+          AND series_id = ?
+        """,
+        (user_id, event_id),
+    ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def _get_exception_occurrence(user_id: int, event_id: int, occurrence_start: datetime) -> dict | None:
+    event = get_event(user_id, event_id)
+
+    if event is None:
+        return None
+
+    row = get_db().execute(
+        """
+        SELECT *
+        FROM event_exceptions
+        WHERE user_id = ?
+          AND series_id = ?
+          AND original_start_time = ?
+        """,
+        (user_id, event_id, _format_datetime(occurrence_start)),
+    ).fetchone()
+
+    if row is None:
+        return _build_occurrence_for_start(event, occurrence_start)
+
+    exception = dict(row)
+
+    if exception["exception_type"] == EXCEPTION_CANCELLED:
+        return None
+
+    return _serialize_modified_occurrence(event, exception)
+
+
+def _build_occurrence_for_start(event: dict, occurrence_start: datetime) -> dict | None:
+    series_start = _parse_datetime(event["start_time"])
+    series_end = _parse_datetime(event["end_time"])
+
+    if not _is_occurrence_start(event, occurrence_start):
+        return None
+
+    return _serialize_occurrence(event, occurrence_start, occurrence_start + (series_end - series_start))
 
 
 def _parse_query_range(filters: dict) -> tuple[datetime, datetime]:
@@ -250,6 +495,37 @@ def _next_occurrence(start_time: datetime, recurrence_type: str, interval: int) 
         return _add_months(start_time, interval)
 
     return start_time
+
+
+def _is_occurrence_start(event: dict, occurrence_start: datetime) -> bool:
+    series_start = _parse_datetime(event["start_time"])
+    recurrence_until = _parse_datetime(event["recurrence_until"]) if event["recurrence_until"] else None
+
+    if _to_comparable_datetime(occurrence_start, series_start) < _to_comparable_datetime(series_start, series_start):
+        return False
+
+    if recurrence_until and _to_comparable_datetime(occurrence_start, series_start) > _to_comparable_datetime(recurrence_until, series_start):
+        return False
+
+    if event["recurrence_type"] == "none":
+        return _format_datetime(occurrence_start) == _format_datetime(series_start)
+
+    candidate = series_start
+
+    for _ in range(10000):
+        if _format_datetime(candidate) == _format_datetime(occurrence_start):
+            return True
+
+        if _to_comparable_datetime(candidate, series_start) > _to_comparable_datetime(occurrence_start, series_start):
+            return False
+
+        candidate = _next_occurrence(
+            candidate,
+            event["recurrence_type"],
+            int(event["recurrence_interval"]),
+        )
+
+    return False
 
 
 def _add_months(value: datetime, months: int) -> datetime:
