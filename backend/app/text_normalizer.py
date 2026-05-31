@@ -59,6 +59,14 @@ def normalize_transcript(text: str) -> str:
         logger.warning("transcript_normalize_empty fallback=original")
         return original_text
 
+    if _should_keep_original_query(original_text, normalized_text):
+        logger.warning(
+            "transcript_normalize_query_fallback original_text=%s normalized_text=%s",
+            original_text,
+            normalized_text,
+        )
+        return original_text
+
     logger.info(
         "transcript_normalize_success original_length=%s normalized_length=%s original_text=%s normalized_text=%s",
         len(original_text),
@@ -68,3 +76,24 @@ def normalize_transcript(text: str) -> str:
     )
 
     return normalized_text
+
+
+def _should_keep_original_query(original_text: str, normalized_text: str) -> bool:
+    return _looks_like_calendar_query(original_text) and _looks_like_answer_fragment(normalized_text)
+
+
+def _looks_like_calendar_query(text: str) -> bool:
+    compact_text = text.replace(" ", "")
+    query_markers = ("什么", "哪些", "有啥", "有什么", "安排", "日程", "事情", "事项")
+    time_markers = ("今天", "明天", "后天", "本周", "这周", "下周", "这个月", "哪天")
+
+    return any(marker in compact_text for marker in query_markers) and any(
+        marker in compact_text for marker in time_markers
+    )
+
+
+def _looks_like_answer_fragment(text: str) -> bool:
+    compact_text = text.replace(" ", "")
+    answer_markers = ("以下事项", "以下日程", "有以下", "安排如下", "事项如下", "日程如下")
+
+    return compact_text.endswith(("：", ":")) or any(marker in compact_text for marker in answer_markers)

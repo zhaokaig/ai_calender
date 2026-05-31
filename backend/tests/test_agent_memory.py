@@ -6,6 +6,9 @@ from app.agent.schemas import CALENDAR_INTENT, CREATE_EVENT, SUCCESS, AgentRespo
 
 
 class AgentMemoryTest(unittest.TestCase):
+    def setUp(self):
+        clear_memory()
+
     def tearDown(self):
         clear_memory()
 

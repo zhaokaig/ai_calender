@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import current_app
@@ -7,22 +7,22 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from ..logging_config import get_logger
-from .schemas import CALENDAR_INTENT, SMALLTALK_INTENT, UNCLEAR_INTENT, ActionPlan
+from .schemas import CALENDAR_INTENT, QUERY_EVENTS, SMALLTALK_INTENT, UNCLEAR_INTENT, ActionPlan, IntentResult
 
 logger = get_logger("agent.parser")
 
 
-def classify_intent(text: str, timezone: str) -> ActionPlan:
+def classify_intent(text: str, timezone: str) -> IntentResult:
     normalized_text = text.strip()
     logger.info("intent_classify_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
     if not normalized_text:
         logger.warning("intent_classify_unclear reason=empty_text")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="你说话了吗？我没听见，再说一遍吧。")
+        return IntentResult(intent=UNCLEAR_INTENT, text="你说话了吗？我没听见，再说一遍吧。")
 
     if not current_app.config.get("OPENAI_API_KEY"):
         logger.error("intent_classify_failed reason=missing_api_key")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="日程助手还没有配置好，暂时不能理解语音或文字指令。")
+        return IntentResult(intent=UNCLEAR_INTENT, text="日程助手还没有配置好，暂时不能理解语音或文字指令。")
 
     try:
         payload = _invoke_json(
@@ -35,20 +35,20 @@ def classify_intent(text: str, timezone: str) -> ActionPlan:
         )
     except Exception:
         logger.exception("intent_classify_failed reason=llm_error")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="我刚才没理解清楚，请换个说法再说一次日程需求。")
-    plan = ActionPlan.from_dict(
+        return IntentResult(intent=UNCLEAR_INTENT, text="我刚才没理解清楚，请换个说法再说一次日程需求。")
+
+    result = IntentResult.from_dict(
         {
             "intent": payload.get("intent"),
-            "reply": payload.get("reply"),
-            "actions": [],
+            "text": payload.get("text") or payload.get("reply"),
         }
     )
-    logger.info("intent_classify_success intent=%s reply=%s", plan.intent, plan.reply)
+    logger.info("intent_classify_success intent=%s text=%s", result.intent, result.text)
 
-    return plan
+    return result
 
 
-def plan_calendar_actions(
+def recognize_event_tasks(
     text: str,
     timezone: str,
     existing_events: list[dict] | None = None,
@@ -56,10 +56,10 @@ def plan_calendar_actions(
     recent_turns: list[dict] | None = None,
 ) -> ActionPlan:
     normalized_text = text.strip()
-    logger.info("action_plan_start text_length=%s timezone=%s", len(normalized_text), timezone)
+    logger.info("event_recognition_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
     if not current_app.config.get("OPENAI_API_KEY"):
-        logger.error("action_plan_failed reason=missing_api_key")
+        logger.error("event_recognition_failed reason=missing_api_key")
         return ActionPlan(intent=UNCLEAR_INTENT, reply="日程助手还没有配置好，暂时不能提取日程任务。")
 
     try:
@@ -75,7 +75,7 @@ def plan_calendar_actions(
             },
         )
     except Exception:
-        logger.exception("action_plan_failed reason=llm_error")
+        logger.exception("event_recognition_failed reason=llm_error")
         return ActionPlan(intent=UNCLEAR_INTENT, reply="我没能提取出具体日程，请说清楚时间和要做的事。")
     plan = ActionPlan.from_dict(
         {
@@ -84,13 +84,80 @@ def plan_calendar_actions(
             "actions": payload.get("actions") or [],
         }
     )
+
+    if not plan.actions:
+        fallback_action = _fallback_query_action(normalized_text, timezone)
+
+        if fallback_action:
+            plan = ActionPlan.from_dict(
+                {
+                    "intent": CALENDAR_INTENT,
+                    "reply": None,
+                    "actions": [fallback_action],
+                }
+            )
+
     logger.info(
-        "action_plan_success action_count=%s actions=%s",
+        "event_recognition_success action_count=%s actions=%s",
         len(plan.actions),
         [action.to_dict() for action in plan.actions],
     )
 
     return plan
+
+
+def plan_calendar_actions(
+    text: str,
+    timezone: str,
+    existing_events: list[dict] | None = None,
+    recent_events: list[dict] | None = None,
+    recent_turns: list[dict] | None = None,
+) -> ActionPlan:
+    return recognize_event_tasks(text, timezone, existing_events, recent_events, recent_turns)
+
+
+def _fallback_query_action(text: str, timezone: str) -> dict | None:
+    compact_text = text.replace(" ", "")
+    now = datetime.now(ZoneInfo(timezone))
+
+    if _looks_like_week_query(compact_text):
+        start = datetime.combine(now.date() - timedelta(days=now.weekday()), time.min, tzinfo=now.tzinfo)
+        end = start + timedelta(days=7)
+
+        return {
+            "type": QUERY_EVENTS,
+            "confidence": 0.6,
+            "arguments": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "period_label": "这周",
+            },
+        }
+
+    if _looks_like_today_query(compact_text):
+        return {
+            "type": QUERY_EVENTS,
+            "confidence": 0.6,
+            "arguments": {
+                "date": now.date().isoformat(),
+                "period_label": "今天",
+            },
+        }
+
+    return None
+
+
+def _looks_like_today_query(text: str) -> bool:
+    return "今天" in text and (
+        any(marker in text for marker in ("什么", "哪些", "有啥", "有什么", "安排", "日程", "事情", "事项"))
+        or any(marker in text for marker in ("以下事项", "以下日程", "有以下"))
+    )
+
+
+def _looks_like_week_query(text: str) -> bool:
+    return any(marker in text for marker in ("这周", "本周", "这一周")) and any(
+        marker in text for marker in ("什么", "哪些", "有啥", "有什么", "安排", "日程", "事情", "事项", "要做")
+    )
 
 
 def generate_smalltalk_reply(text: str, timezone: str) -> str:
@@ -119,13 +186,51 @@ def generate_smalltalk_reply(text: str, timezone: str) -> str:
     return reply
 
 
+def generate_calendar_reply(
+    original_text: str,
+    rewritten_text: str,
+    timezone: str,
+    response: dict,
+) -> str:
+    logger.info(
+        "calendar_reply_start status=%s result_count=%s timezone=%s",
+        response.get("status"),
+        len(response.get("results", [])),
+        timezone,
+    )
+
+    if not current_app.config.get("OPENAI_API_KEY"):
+        logger.error("calendar_reply_failed reason=missing_api_key")
+        return response.get("message") or "日程操作已经处理完成。"
+
+    try:
+        payload = _invoke_json(
+            _calendar_reply_prompt(),
+            {
+                "original_text": original_text,
+                "rewritten_text": rewritten_text,
+                "timezone": timezone,
+                "current_datetime": _current_datetime(timezone),
+                "response": response,
+            },
+        )
+    except Exception:
+        logger.exception("calendar_reply_failed reason=llm_error")
+        return response.get("message") or "日程操作已经处理完成。"
+
+    reply = str(payload.get("reply") or response.get("message") or "日程操作已经处理完成。").strip()
+    logger.info("calendar_reply_success reply_length=%s", len(reply))
+
+    return reply
+
+
 def parse_command(text: str, timezone: str) -> ActionPlan:
     intent_plan = classify_intent(text, timezone)
 
     if intent_plan.intent != CALENDAR_INTENT:
-        return intent_plan
+        return intent_plan.to_action_plan()
 
-    return plan_calendar_actions(text, timezone)
+    return recognize_event_tasks(intent_plan.text or text, timezone)
 
 
 def _invoke_json(system_prompt: str, payload: dict) -> dict:
@@ -190,7 +295,7 @@ def _intent_prompt() -> str:
 输出结构：
 {
   "intent": "calendar" | "smalltalk" | "unsupported" | "unclear",
-  "reply": string | null
+  "text": string
 }
 
 意图定义：
@@ -201,14 +306,16 @@ def _intent_prompt() -> str:
 
 规则：
 - 这里只做意图识别，不要提取具体任务。
-- 如果是 smalltalk 或 unsupported，给出简短中文回复，并自然引导用户使用日历功能。
-- 如果是 calendar，reply 必须为 null。
+- 如果是 smalltalk 或 unsupported，text 是简短中文回复，并自然引导用户使用日历功能。
+- 如果是 unclear，text 是简短追问或错误提示。
+- 如果是 calendar，text 是改写后的用户日程指令：去除口癖、重复、犹豫和自我纠正中被否定的内容，但必须保留用户要表达的任务。不要提取 JSON 动作。
+- 例如原文“啊 今天早上九点开会，啊不对是十点”，calendar 的 text 应为“今天早上十点开会”。
 """.strip()
 
 
 def _planner_prompt() -> str:
     return """
-你是语音日历助手的“任务提取”节点。你只能返回 JSON，不要输出解释文字。
+你是语音日历助手的“事件识别”节点。你只能返回 JSON，不要输出解释文字。
 
 输出结构：
 {
@@ -227,14 +334,20 @@ def _planner_prompt() -> str:
 - query_events 的 arguments 使用：date 或 start/end，可附加 keywords。
 - update_event 的 arguments 使用：selector 和 updates。
 - delete_event 的 arguments 使用：selector。
-- selector 可包含：date、start、end、keywords、all。
+- selector 可包含：date、start、end、keywords、all、event_id、scope、from。
+- selector.scope 可选：series、occurrence、future。默认 series 表示整条日程或整条循环；occurrence 表示只处理某一次循环；future 表示从 selector.from 或 selector.start 对应的那次开始处理之后所有循环。
 - recurrence_type 只能是：none、daily、weekly、monthly。
 - recurrence_interval 默认是 1。
 - 时间必须使用带有用户 timezone 的 ISO datetime 字符串。
 - 创建或修改事件时，如果用户没有说明 end_time，则设为 start_time 后一小时。
 - 如果用户说每天、每周、每月，按语义设置 recurrence_type。
 - 如果用户明确要求删除某天所有事件，设置 selector.all 为 true，keywords 设为空数组。
+- “今天都有什么事情/今天有哪些安排/今天有什么日程”这类问题必须输出 query_events，arguments.date 为今天，period_label 为“今天”。
+- “这周有什么事/本周有哪些安排/这周有什么要做”这类问题必须输出 query_events，arguments.start/end 为本周周一 00:00 到下周周一 00:00，period_label 为“这周”。
+- 如果输入看起来像“今天有以下事项：”这类回答开头，也应按 query_events 处理，因为它可能来自语音清洗误改写。
 - 如果是删除/修改单个具名事件，用户提到日期或时间时要放入 selector，并从事件标题、人名、地点中提取有意义的 keywords。
+- 如果用户说“这周/某一周/本次/这节课取消或修改”，并且目标是循环日程中的一次，设置 selector.scope 为 occurrence。
+- 如果用户说“从下周开始/某天之后/以后都不用/之后取消”，并且目标是循环日程，设置 selector.scope 为 future，并设置 selector.from 为开始删除之后循环的那次 start_time。
 - 必须保留所有人名、公司名、地点、事件名、专有名词、可能的错别字，以及用户自己的表达。
 - 输入 JSON 里会提供 existing_events，表示用户近期已有日程，可用于判断用户是在修改已有日程。
 - 输入 JSON 里会提供 recent_events，表示当前对话里刚刚创建、修改或查询过的日程，按从新到旧排序。它是短期记忆，优先级高于 existing_events。
@@ -266,6 +379,14 @@ def _planner_prompt() -> str:
 输出动作：
 - 删除事件：selector.date 为明天，selector.all 为 true，selector.keywords 为空数组
 
+输入文本：这周的课程取消
+输出动作：
+- 删除事件：selector.scope 为 occurrence，selector.date 为这周课程当天，selector.keywords 为 ["课程"]
+
+输入文本：从下周开始就不用上课了
+输出动作：
+- 删除事件：selector.scope 为 future，selector.from 为下周课程开始时间，selector.keywords 为 ["上课", "课程"]
+
 输入文本：今天的考试是雅思考试，安装的家具是电动升降桌
 已有日程：考试 16:00-17:00，安装家具 20:00-21:00
 输出动作：
@@ -292,4 +413,24 @@ def _smalltalk_prompt() -> str:
 - 如果用户在闲聊，简短回应即可。
 - 合适时自然引导用户说出日历指令。
 - 不要声称自己已经执行了日程操作。
+""".strip()
+
+
+def _calendar_reply_prompt() -> str:
+    return """
+你是语音日历助手的“结果回复”节点。你只能返回 JSON，不要输出解释文字。
+
+输出结构：
+{
+  "reply": string
+}
+
+规则：
+- 根据工具执行结果给用户一个简短、自然的中文回复。
+- 不要编造工具结果中不存在的日程、时间或状态。
+- 如果是创建、修改、删除成功，用一句话确认完成。
+- 如果是查询，像人一样概括查询结果，例如“今天上午10点要开会，下午3点半要写周报。”
+- 如果工具返回 not_found 或 needs_selection，要直接说明问题并让用户补充信息。
+- 多个操作都成功时，可以合并成一句简短总结。
+- 不要提到 JSON、工具调用、节点或内部流程。
 """.strip()

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from .schemas import (
     CALENDAR_INTENT,
     CREATE_EVENT,
@@ -13,7 +15,16 @@ from .schemas import (
     CalendarAction,
 )
 from ..logging_config import get_logger
-from ..event_service import create_event, delete_event, get_event, list_events, update_event
+from ..event_service import (
+    create_event,
+    delete_event,
+    delete_event_occurrence,
+    get_event,
+    list_events,
+    truncate_recurring_event,
+    update_event,
+    update_event_occurrence,
+)
 
 logger = get_logger("agent.executor")
 
@@ -80,12 +91,13 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         return {
             "action": action.type,
             "status": SUCCESS,
-            "message": _query_message(events),
+            "message": _query_message(events, action.arguments),
             "events": events,
         }
 
     if action.type == UPDATE_EVENT:
-        candidates = _find_candidates(user_id, action.arguments.get("selector", {}))
+        selector = action.arguments.get("selector", {})
+        candidates = _find_candidates(user_id, selector)
 
         if not candidates:
             return _not_found_result(action.type)
@@ -93,11 +105,19 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         if len(candidates) > 1:
             return _needs_selection_result(action.type, candidates)
 
-        updated_event = update_event(
-            user_id,
-            candidates[0]["series_id"],
-            action.arguments.get("updates", {}),
-        )
+        if selector.get("scope") == "occurrence" and candidates[0].get("is_recurring"):
+            updated_event = update_event_occurrence(
+                user_id,
+                candidates[0]["series_id"],
+                candidates[0]["occurrence_start_time"],
+                action.arguments.get("updates", {}),
+            )
+        else:
+            updated_event = update_event(
+                user_id,
+                candidates[0]["series_id"],
+                action.arguments.get("updates", {}),
+            )
         return {
             "action": action.type,
             "status": SUCCESS,
@@ -124,12 +144,30 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         if len(candidates) > 1:
             return _needs_selection_result(action.type, candidates)
 
-        delete_event(user_id, candidates[0]["series_id"])
+        if selector.get("scope") == "occurrence" and candidates[0].get("is_recurring"):
+            deleted_event = delete_event_occurrence(
+                user_id,
+                candidates[0]["series_id"],
+                candidates[0]["occurrence_start_time"],
+            )
+            message = f"已取消本次日程：{candidates[0]['title']}。"
+        elif selector.get("scope") == "future" and candidates[0].get("is_recurring"):
+            deleted_event = truncate_recurring_event(
+                user_id,
+                candidates[0]["series_id"],
+                selector.get("from") or selector.get("start") or candidates[0]["occurrence_start_time"],
+            )
+            message = f"已删除之后的循环日程：{candidates[0]['title']}。"
+        else:
+            delete_event(user_id, candidates[0]["series_id"])
+            deleted_event = candidates[0]
+            message = f"已删除日程：{candidates[0]['title']}。"
+
         return {
             "action": action.type,
             "status": SUCCESS,
-            "message": f"已删除日程：{candidates[0]['title']}。",
-            "events": [candidates[0]],
+            "message": message,
+            "events": [deleted_event or candidates[0]],
         }
 
     return {
@@ -247,14 +285,73 @@ def _needs_selection_result(action_type: str, candidates: list[dict]) -> dict:
     }
 
 
-def _query_message(events: list[dict]) -> str:
+def _query_message(events: list[dict], filters: dict) -> str:
+    period_label = _query_period_label(filters)
+    include_event_dates = "date" not in filters and period_label not in {"今天", "明天", "后天"}
+
     if not events:
-        return "这段时间没有找到日程。"
+        return f"{period_label}没有找到日程。"
 
     if len(events) == 1:
-        return f"找到 1 个日程：{events[0]['title']}。"
+        return f"{period_label}有 1 个日程：{_event_phrase(events[0], include_event_dates)}。"
 
-    return f"找到 {len(events)} 个日程。"
+    event_phrases = [_event_phrase(event, include_event_dates) for event in events[:8]]
+    message = f"{period_label}有 {len(events)} 个日程：" + "；".join(event_phrases)
+
+    if len(events) > 8:
+        message += f"；还有 {len(events) - 8} 个日程"
+
+    return f"{message}。"
+
+
+def _query_period_label(filters: dict) -> str:
+    if filters.get("period_label"):
+        return filters["period_label"]
+
+    if filters.get("date"):
+        selected_date = datetime.fromisoformat(filters["date"])
+        return f"{selected_date.month}月{selected_date.day}日"
+
+    return "这段时间"
+
+
+def _event_phrase(event: dict, include_date: bool) -> str:
+    start_time = _parse_event_datetime(event.get("start_time"))
+
+    if start_time is None:
+        return event["title"]
+
+    return f"{_format_event_time_label(start_time, include_date)}{event['title']}"
+
+
+def _parse_event_datetime(value: str | None):
+    if not value:
+        return None
+
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _format_event_time_label(value: datetime, include_date: bool) -> str:
+    minute = value.minute
+    hour = value.hour
+    day_label = f"{value.month}月{value.day}日" if include_date else ""
+
+    if hour < 6:
+        period = "凌晨"
+        display_hour = hour
+    elif hour < 12:
+        period = "上午"
+        display_hour = hour
+    elif hour < 18:
+        period = "下午"
+        display_hour = hour - 12 if hour > 12 else 12
+    else:
+        period = "晚上"
+        display_hour = hour - 12
+
+    time_label = f"{period}{display_hour}点" if minute == 0 else f"{period}{display_hour}点{minute:02d}分"
+
+    return f"{day_label}{time_label}"
 
 
 def _compose_message(results: list[dict]) -> str:

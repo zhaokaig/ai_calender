@@ -1,12 +1,85 @@
 import unittest
+from datetime import timedelta
 from unittest.mock import patch
 
 from app.factory import create_app
 from app.agent import parser
-from app.agent.schemas import UPDATE_EVENT
+from app.agent.schemas import QUERY_EVENTS, UPDATE_EVENT
 
 
 class PlannerExistingEventsTest(unittest.TestCase):
+    def test_classify_intent_returns_rewritten_calendar_text(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+
+        def fake_invoke_json(_prompt, _payload):
+            return {"intent": "calendar", "text": "今天早上十点开会"}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            result = parser.classify_intent("啊 今天早上九点开会，啊不对是十点", "Asia/Shanghai")
+
+        self.assertEqual(result.intent, "calendar")
+        self.assertEqual(result.text, "今天早上十点开会")
+
+    def test_plan_calendar_actions_falls_back_for_today_query_answer_fragment(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+
+        def fake_invoke_json(_prompt, _payload):
+            return {"reply": None, "actions": []}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            plan = parser.plan_calendar_actions("今天有以下事项：", "Asia/Shanghai")
+
+        self.assertEqual(len(plan.actions), 1)
+        self.assertEqual(plan.actions[0].type, QUERY_EVENTS)
+        self.assertIn("date", plan.actions[0].arguments)
+        self.assertEqual(plan.actions[0].arguments["period_label"], "今天")
+
+    def test_generate_calendar_reply_uses_tool_results(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+        captured_payload = {}
+
+        def fake_invoke_json(_prompt, payload):
+            captured_payload.update(payload)
+            return {"reply": "今天上午十点要开会。"}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            reply = parser.generate_calendar_reply(
+                "今天有什么事",
+                "今天有什么事",
+                "Asia/Shanghai",
+                {
+                    "status": "success",
+                    "message": "今天有 1 个日程：上午10点开会。",
+                    "results": [{"status": "success", "message": "今天有 1 个日程：上午10点开会。"}],
+                },
+            )
+
+        self.assertEqual(reply, "今天上午十点要开会。")
+        self.assertEqual(captured_payload["response"]["status"], "success")
+        self.assertEqual(captured_payload["rewritten_text"], "今天有什么事")
+
+    def test_plan_calendar_actions_falls_back_for_week_query(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+
+        def fake_invoke_json(_prompt, _payload):
+            return {"reply": None, "actions": []}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            plan = parser.plan_calendar_actions("这周有什么事要做", "Asia/Shanghai")
+
+        start_time = parser.datetime.fromisoformat(plan.actions[0].arguments["start"])
+        end_time = parser.datetime.fromisoformat(plan.actions[0].arguments["end"])
+
+        self.assertEqual(plan.actions[0].type, QUERY_EVENTS)
+        self.assertEqual(plan.actions[0].arguments["period_label"], "这周")
+        self.assertEqual(start_time.utcoffset(), timedelta(hours=8))
+        self.assertEqual((end_time - start_time).days, 7)
+        self.assertEqual(start_time.weekday(), 0)
+
     def test_plan_calendar_actions_passes_existing_events_for_updates(self):
         app = create_app()
         app.config["OPENAI_API_KEY"] = "test-key"
