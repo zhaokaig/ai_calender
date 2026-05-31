@@ -37,11 +37,11 @@ def transcribe_audio(file_storage) -> str:
 
     if not current_app.config.get("DASHSCOPE_API_KEY"):
         logger.warning("asr_transcribe_failed filename=%s reason=missing_dashscope_api_key", filename)
-        raise ValueError("DASHSCOPE_API_KEY is required for audio transcription")
+        raise ValueError("语音服务还没有配置好，暂时不能识别录音。")
 
     if suffix not in SUPPORTED_AUDIO_EXTENSIONS:
         logger.warning("asr_transcribe_failed filename=%s reason=unsupported_audio_type", filename)
-        raise ValueError("unsupported audio file type")
+        raise ValueError("这个录音格式我暂时识别不了，换一种方式再试试吧。")
 
     with NamedTemporaryFile(suffix=suffix) as temp_file:
         file_storage.save(temp_file.name)
@@ -49,7 +49,7 @@ def transcribe_audio(file_storage) -> str:
 
         if Path(temp_file.name).stat().st_size == 0:
             logger.warning("asr_transcribe_failed filename=%s reason=empty_file", filename)
-            raise ValueError("audio file is empty")
+            raise ValueError("你说话了吗？我没听见，再说一遍吧。")
 
         mime_type = _get_audio_mime_type(file_storage.mimetype, suffix)
         data_uri = _build_audio_data_uri(temp_file.name, mime_type)
@@ -83,9 +83,14 @@ def transcribe_audio(file_storage) -> str:
             )
         except OpenAIError as error:
             logger.exception("asr_transcribe_failed filename=%s reason=openai_error", filename)
-            raise AudioTranscriptionError(f"audio transcription failed: {error}") from error
+            raise AudioTranscriptionError("语音识别服务刚才没有响应，请再试一次。") from error
 
     text = completion.choices[0].message.content or ""
+
+    if not text.strip():
+        logger.warning("asr_transcribe_failed filename=%s reason=empty_transcript", filename)
+        raise ValueError("你说话了吗？我没听见，再说一遍吧。")
+
     logger.info("asr_transcribe_success filename=%s text_length=%s", filename, len(text))
 
     return text
