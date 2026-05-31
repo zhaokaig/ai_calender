@@ -3,10 +3,24 @@ from unittest.mock import patch
 
 from app.factory import create_app
 from app.agent import parser
-from app.agent.schemas import UPDATE_EVENT
+from app.agent.schemas import QUERY_EVENTS, UPDATE_EVENT
 
 
 class PlannerExistingEventsTest(unittest.TestCase):
+    def test_plan_calendar_actions_falls_back_for_today_query_answer_fragment(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+
+        def fake_invoke_json(_prompt, _payload):
+            return {"reply": None, "actions": []}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            plan = parser.plan_calendar_actions("今天有以下事项：", "Asia/Shanghai")
+
+        self.assertEqual(len(plan.actions), 1)
+        self.assertEqual(plan.actions[0].type, QUERY_EVENTS)
+        self.assertIn("date", plan.actions[0].arguments)
+
     def test_plan_calendar_actions_passes_existing_events_for_updates(self):
         app = create_app()
         app.config["OPENAI_API_KEY"] = "test-key"
