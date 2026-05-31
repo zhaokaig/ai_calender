@@ -7,22 +7,22 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from ..logging_config import get_logger
-from .schemas import CALENDAR_INTENT, QUERY_EVENTS, SMALLTALK_INTENT, UNCLEAR_INTENT, ActionPlan
+from .schemas import CALENDAR_INTENT, QUERY_EVENTS, SMALLTALK_INTENT, UNCLEAR_INTENT, ActionPlan, IntentResult
 
 logger = get_logger("agent.parser")
 
 
-def classify_intent(text: str, timezone: str) -> ActionPlan:
+def classify_intent(text: str, timezone: str) -> IntentResult:
     normalized_text = text.strip()
     logger.info("intent_classify_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
     if not normalized_text:
         logger.warning("intent_classify_unclear reason=empty_text")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="你说话了吗？我没听见，再说一遍吧。")
+        return IntentResult(intent=UNCLEAR_INTENT, text="你说话了吗？我没听见，再说一遍吧。")
 
     if not current_app.config.get("OPENAI_API_KEY"):
         logger.error("intent_classify_failed reason=missing_api_key")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="日程助手还没有配置好，暂时不能理解语音或文字指令。")
+        return IntentResult(intent=UNCLEAR_INTENT, text="日程助手还没有配置好，暂时不能理解语音或文字指令。")
 
     try:
         payload = _invoke_json(
@@ -35,17 +35,17 @@ def classify_intent(text: str, timezone: str) -> ActionPlan:
         )
     except Exception:
         logger.exception("intent_classify_failed reason=llm_error")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="我刚才没理解清楚，请换个说法再说一次日程需求。")
-    plan = ActionPlan.from_dict(
+        return IntentResult(intent=UNCLEAR_INTENT, text="我刚才没理解清楚，请换个说法再说一次日程需求。")
+
+    result = IntentResult.from_dict(
         {
             "intent": payload.get("intent"),
-            "reply": payload.get("reply"),
-            "actions": [],
+            "text": payload.get("text") or payload.get("reply"),
         }
     )
-    logger.info("intent_classify_success intent=%s reply=%s", plan.intent, plan.reply)
+    logger.info("intent_classify_success intent=%s text=%s", result.intent, result.text)
 
-    return plan
+    return result
 
 
 def plan_calendar_actions(
@@ -180,9 +180,9 @@ def parse_command(text: str, timezone: str) -> ActionPlan:
     intent_plan = classify_intent(text, timezone)
 
     if intent_plan.intent != CALENDAR_INTENT:
-        return intent_plan
+        return intent_plan.to_action_plan()
 
-    return plan_calendar_actions(text, timezone)
+    return plan_calendar_actions(intent_plan.text or text, timezone)
 
 
 def _invoke_json(system_prompt: str, payload: dict) -> dict:
@@ -247,7 +247,7 @@ def _intent_prompt() -> str:
 输出结构：
 {
   "intent": "calendar" | "smalltalk" | "unsupported" | "unclear",
-  "reply": string | null
+  "text": string
 }
 
 意图定义：
@@ -258,8 +258,10 @@ def _intent_prompt() -> str:
 
 规则：
 - 这里只做意图识别，不要提取具体任务。
-- 如果是 smalltalk 或 unsupported，给出简短中文回复，并自然引导用户使用日历功能。
-- 如果是 calendar，reply 必须为 null。
+- 如果是 smalltalk 或 unsupported，text 是简短中文回复，并自然引导用户使用日历功能。
+- 如果是 unclear，text 是简短追问或错误提示。
+- 如果是 calendar，text 是改写后的用户日程指令：去除口癖、重复、犹豫和自我纠正中被否定的内容，但必须保留用户要表达的任务。不要提取 JSON 动作。
+- 例如原文“啊 今天早上九点开会，啊不对是十点”，calendar 的 text 应为“今天早上十点开会”。
 """.strip()
 
 

@@ -8,6 +8,19 @@ from app.agent.schemas import QUERY_EVENTS, UPDATE_EVENT
 
 
 class PlannerExistingEventsTest(unittest.TestCase):
+    def test_classify_intent_returns_rewritten_calendar_text(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+
+        def fake_invoke_json(_prompt, _payload):
+            return {"intent": "calendar", "text": "今天早上十点开会"}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            result = parser.classify_intent("啊 今天早上九点开会，啊不对是十点", "Asia/Shanghai")
+
+        self.assertEqual(result.intent, "calendar")
+        self.assertEqual(result.text, "今天早上十点开会")
+
     def test_plan_calendar_actions_falls_back_for_today_query_answer_fragment(self):
         app = create_app()
         app.config["OPENAI_API_KEY"] = "test-key"
