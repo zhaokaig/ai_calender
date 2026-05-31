@@ -179,14 +179,25 @@ function CalendarPage({ token, user, onLogout }) {
     loadEvents();
   }, [monthRange.start.getTime(), monthRange.end.getTime()]);
 
-  const handleSaveEvent = async (formData, eventId) => {
+  const handleSaveEvent = async (formData, eventItem) => {
     setError("");
     try {
+      const eventId = eventItem?.series_id || eventItem?.id;
+
       if (eventId) {
+        const isRecurringOccurrence = eventItem?.is_recurring && eventItem?.occurrence_start_time;
+        const body = isRecurringOccurrence
+          ? {
+              ...formData,
+              scope: "occurrence",
+              occurrence_start_time: eventItem.occurrence_start_time,
+            }
+          : formData;
+
         await apiRequest(`/api/events/${eventId}`, {
           method: "PATCH",
           token,
-          body: formData,
+          body,
         });
       } else {
         await apiRequest("/api/events", {
@@ -206,10 +217,23 @@ function CalendarPage({ token, user, onLogout }) {
     }
   };
 
-  const handleDeleteEvent = async (eventId) => {
+  const handleDeleteEvent = async (eventItem, scope = "series") => {
     setError("");
     try {
-      await apiRequest(`/api/events/${eventId}`, {
+      const eventId = eventItem?.series_id || eventItem?.id;
+      const query = new URLSearchParams();
+
+      if (scope === "occurrence") {
+        query.set("scope", "occurrence");
+        query.set("occurrence_start_time", eventItem.occurrence_start_time);
+      }
+
+      if (scope === "future") {
+        query.set("scope", "future");
+        query.set("from", eventItem.occurrence_start_time || eventItem.start_time);
+      }
+
+      await apiRequest(`/api/events/${eventId}${query.toString() ? `?${query}` : ""}`, {
         method: "DELETE",
         token,
       });
@@ -753,7 +777,7 @@ function EventModal({ state, onClose, onSave, onDelete }) {
         payload.recurrence_until = fromDatetimeLocal(form.recurrence_until);
       }
 
-      await onSave(payload, editingEvent?.series_id || editingEvent?.id);
+      await onSave(payload, editingEvent);
     } catch (requestError) {
       setError(toUserMessage(requestError, "保存日程失败，请检查标题和时间后再试。"));
     } finally {
@@ -761,12 +785,12 @@ function EventModal({ state, onClose, onSave, onDelete }) {
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (scope = "series") => {
     setError("");
     setIsSaving(true);
 
     try {
-      await onDelete(editingEvent.series_id || editingEvent.id);
+      await onDelete(editingEvent, scope);
     } catch (requestError) {
       setError(toUserMessage(requestError, "删除日程失败，请稍后再试。"));
       setIsSaving(false);
@@ -857,10 +881,27 @@ function EventModal({ state, onClose, onSave, onDelete }) {
 
           <div className="modal-actions">
             {editingEvent ? (
-              <button className="danger-button" type="button" disabled={isSaving} onClick={handleDelete}>
-                <Trash2 size={17} aria-hidden="true" />
-                删除
-              </button>
+              editingEvent.is_recurring ? (
+                <div className="recurrence-delete-actions">
+                  <button className="danger-button" type="button" disabled={isSaving} onClick={() => handleDelete("occurrence")}>
+                    <Trash2 size={17} aria-hidden="true" />
+                    仅删本次
+                  </button>
+                  <button className="danger-button" type="button" disabled={isSaving} onClick={() => handleDelete("future")}>
+                    <Trash2 size={17} aria-hidden="true" />
+                    删除以后
+                  </button>
+                  <button className="danger-button" type="button" disabled={isSaving} onClick={() => handleDelete("series")}>
+                    <Trash2 size={17} aria-hidden="true" />
+                    删除全部
+                  </button>
+                </div>
+              ) : (
+                <button className="danger-button" type="button" disabled={isSaving} onClick={() => handleDelete("series")}>
+                  <Trash2 size={17} aria-hidden="true" />
+                  删除
+                </button>
+              )
             ) : null}
             <button className="primary-button" type="submit" disabled={isSaving}>
               <Save size={17} aria-hidden="true" />
