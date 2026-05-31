@@ -147,7 +147,25 @@ LOG_LEVEL=INFO
 LOG_FILE_PATH=instance/ai_calender.log
 ```
 
-The default Compose port mapping is `8080:80` for local testing. On a server, change it to `80:80` in `docker-compose.yml` if the container should serve HTTP directly.
+The default Compose port mapping is `8080:80` for local testing.
+
+On a server, use the server override so the frontend is available directly on port 80:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.server.yml up -d
+```
+
+Then open:
+
+```text
+http://your-server-ip/
+```
+
+If you bind a domain name to the server, open:
+
+```text
+http://your-domain.com/
+```
 
 ## Voice Command API
 
