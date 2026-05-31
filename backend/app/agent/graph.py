@@ -6,6 +6,7 @@ from langgraph.graph import END, StateGraph
 from ..event_service import list_events
 from ..logging_config import get_logger
 from .executor import execute_plan
+from .memory import get_recent_events, remember_events
 from .parser import classify_intent, generate_smalltalk_reply, plan_calendar_actions
 from .schemas import CALENDAR_INTENT, AgentResponse, SMALLTALK_INTENT, SUCCESS, UNSUPPORTED, ActionPlan
 
@@ -77,18 +78,22 @@ def _route_after_intent(state: VoiceCommandState) -> str:
 def _action_planner(state: VoiceCommandState) -> dict[str, Any]:
     logger.info("graph_node_start node=action_planner user_id=%s", state["user_id"])
     existing_events = list_events(state["user_id"], {})
-    plan = plan_calendar_actions(state["text"], state["timezone"], existing_events)
+    recent_events = get_recent_events(state["user_id"])
+    plan = plan_calendar_actions(state["text"], state["timezone"], existing_events, recent_events)
     logger.info("graph_node_finish node=action_planner action_count=%s", len(plan.actions))
     return {"plan": plan}
 
 
 def _tool_executor(state: VoiceCommandState) -> dict[str, Any]:
     logger.info("graph_node_start node=tool_executor user_id=%s", state["user_id"])
+    response = execute_plan(
+        state["user_id"],
+        state["plan"],
+    )
+    remember_events(state["user_id"], response.events)
+
     return {
-        "response": execute_plan(
-            state["user_id"],
-            state["plan"],
-        )
+        "response": response
     }
 
 
