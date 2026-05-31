@@ -106,10 +106,22 @@ class PlannerExistingEventsTest(unittest.TestCase):
                         "end_time": "2026-06-01T15:00:00+08:00",
                     }
                 ],
+                recent_turns=[
+                    {
+                        "user_text": "添加一个会议4",
+                        "assistant_message": "已创建日程：会议4。",
+                        "status": "success",
+                        "intent": "calendar",
+                        "actions": [{"type": "create_event", "arguments": {"title": "会议4"}}],
+                        "events": [{"id": 4, "title": "会议4"}],
+                    }
+                ],
             )
 
         self.assertEqual(captured_payload["recent_events"][0]["id"], 4)
         self.assertEqual(captured_payload["recent_events"][0]["title"], "会议4")
+        self.assertEqual(captured_payload["recent_turns"][0]["user_text"], "添加一个会议4")
+        self.assertEqual(captured_payload["recent_turns"][0]["events"][0]["id"], 4)
         self.assertEqual(plan.actions[0].arguments["selector"]["event_id"], 4)
 
 

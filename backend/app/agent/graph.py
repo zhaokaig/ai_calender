@@ -6,7 +6,7 @@ from langgraph.graph import END, StateGraph
 from ..event_service import list_events
 from ..logging_config import get_logger
 from .executor import execute_plan
-from .memory import get_recent_events, remember_events
+from .memory import get_recent_events, get_recent_turns, remember_events, remember_turn
 from .parser import classify_intent, generate_smalltalk_reply, plan_calendar_actions
 from .schemas import CALENDAR_INTENT, AgentResponse, SMALLTALK_INTENT, SUCCESS, UNSUPPORTED, ActionPlan
 
@@ -79,7 +79,8 @@ def _action_planner(state: VoiceCommandState) -> dict[str, Any]:
     logger.info("graph_node_start node=action_planner user_id=%s", state["user_id"])
     existing_events = list_events(state["user_id"], {})
     recent_events = get_recent_events(state["user_id"])
-    plan = plan_calendar_actions(state["text"], state["timezone"], existing_events, recent_events)
+    recent_turns = get_recent_turns(state["user_id"])
+    plan = plan_calendar_actions(state["text"], state["timezone"], existing_events, recent_events, recent_turns)
     logger.info("graph_node_finish node=action_planner action_count=%s", len(plan.actions))
     return {"plan": plan}
 
@@ -117,4 +118,5 @@ def _chat_responder(state: VoiceCommandState) -> dict[str, Any]:
 
 def _response_composer(state: VoiceCommandState) -> dict[str, Any]:
     logger.info("graph_node_start node=response_composer status=%s", state["response"].status)
+    remember_turn(state["user_id"], state["text"], state["response"])
     return {"response": state["response"]}

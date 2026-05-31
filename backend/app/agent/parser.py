@@ -53,6 +53,7 @@ def plan_calendar_actions(
     timezone: str,
     existing_events: list[dict] | None = None,
     recent_events: list[dict] | None = None,
+    recent_turns: list[dict] | None = None,
 ) -> ActionPlan:
     normalized_text = text.strip()
     logger.info("action_plan_start text_length=%s timezone=%s", len(normalized_text), timezone)
@@ -70,6 +71,7 @@ def plan_calendar_actions(
                 "current_datetime": _current_datetime(timezone),
                 "existing_events": _planner_event_context(existing_events or []),
                 "recent_events": _planner_event_context(recent_events or []),
+                "recent_turns": _planner_turn_context(recent_turns or []),
             },
         )
     except Exception:
@@ -163,6 +165,24 @@ def _planner_event_context(events: list[dict], limit: int = 30) -> list[dict]:
     return context
 
 
+def _planner_turn_context(turns: list[dict], limit: int = 5) -> list[dict]:
+    context = []
+
+    for turn in turns[:limit]:
+        context.append(
+            {
+                "user_text": turn.get("user_text"),
+                "assistant_message": turn.get("assistant_message"),
+                "status": turn.get("status"),
+                "intent": turn.get("intent"),
+                "actions": turn.get("actions", []),
+                "events": _planner_event_context(turn.get("events", []), limit=8),
+            }
+        )
+
+    return context
+
+
 def _intent_prompt() -> str:
     return """
 你是语音日历助手的“意图识别”节点。你只能返回 JSON，不要输出解释文字。
@@ -218,10 +238,12 @@ def _planner_prompt() -> str:
 - 必须保留所有人名、公司名、地点、事件名、专有名词、可能的错别字，以及用户自己的表达。
 - 输入 JSON 里会提供 existing_events，表示用户近期已有日程，可用于判断用户是在修改已有日程。
 - 输入 JSON 里会提供 recent_events，表示当前对话里刚刚创建、修改或查询过的日程，按从新到旧排序。它是短期记忆，优先级高于 existing_events。
+- 输入 JSON 里会提供 recent_turns，表示当前会话最近几轮用户原话、助手回复、动作和涉及日程。它用于理解跨轮省略、纠正和指代。
 - 当用户说“X 是 Y”、“X 改成 Y”、“把 X 改为 Y”、“X 其实是 Y”、“X 不是 A 是 B”这类纠正或补充时，如果 existing_events 中有标题能被 X 匹配的日程，必须输出 update_event，不要输出 create_event。
 - 这类 update_event 的 selector.keywords 使用原日程关键词 X；如果 existing_events 里匹配到该日程，selector 也应带上它的日期或 start/end，updates.title 使用修改后的完整新标题 Y。
 - 不要为了“考试是雅思考试”“安装的家具是电动升降桌”这类表达创建同时间的新日程；应把已有“考试”改为“考雅思”或“雅思考试”，把已有“安装家具”改为“安装电动升降桌”。
 - 当用户说“刚刚说的”、“刚才那个”、“刚添加的”、“上一个”、“这个”、“那个”等指代时，必须优先从 recent_events 里选择被指代日程。
+- 如果 recent_events 不够明确，结合 recent_turns 里最近用户说过的对象、动作和事件来判断指代对象。
 - 如果 recent_events 里能确定唯一指代对象，update_event/delete_event 的 selector 必须使用 event_id 精确指向该日程，不要只用模糊 keywords。
 - 例如用户刚刚创建了 recent_events[0] = {"id": 4, "title": "会议4"}，随后说“把我刚刚说的会议时间改到3点”，应输出 update_event，selector.event_id 为 4，updates.start_time 改为今天 15:00，并相应调整 end_time。
 

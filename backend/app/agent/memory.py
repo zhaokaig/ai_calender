@@ -1,8 +1,10 @@
 from threading import Lock
 
 MAX_EVENTS_PER_USER = 12
+MAX_TURNS_PER_USER = 8
 
 _events_by_user: dict[int, list[dict]] = {}
+_turns_by_user: dict[int, list[dict]] = {}
 _lock = Lock()
 
 
@@ -41,9 +43,37 @@ def get_recent_events(user_id: int, limit: int = 5) -> list[dict]:
         return [event.copy() for event in _events_by_user.get(user_id, [])[:limit]]
 
 
+def remember_turn(user_id: int, user_text: str, response) -> None:
+    events = []
+
+    for event in response.events:
+        memory_event = _memory_event(event)
+
+        if memory_event:
+            events.append(memory_event)
+
+    turn = {
+        "user_text": user_text,
+        "assistant_message": response.message,
+        "status": response.status,
+        "intent": response.intent,
+        "actions": [_action_summary(action) for action in response.actions],
+        "events": events,
+    }
+
+    with _lock:
+        _turns_by_user[user_id] = [turn] + _turns_by_user.get(user_id, [])[: MAX_TURNS_PER_USER - 1]
+
+
+def get_recent_turns(user_id: int, limit: int = 5) -> list[dict]:
+    with _lock:
+        return [_copy_turn(turn) for turn in _turns_by_user.get(user_id, [])[:limit]]
+
+
 def clear_memory() -> None:
     with _lock:
         _events_by_user.clear()
+        _turns_by_user.clear()
 
 
 def _memory_event(event: dict) -> dict | None:
@@ -57,4 +87,22 @@ def _memory_event(event: dict) -> dict | None:
         "title": event.get("title"),
         "start_time": event.get("start_time"),
         "end_time": event.get("end_time"),
+    }
+
+
+def _action_summary(action) -> dict:
+    if hasattr(action, "to_dict"):
+        return action.to_dict()
+
+    return dict(action)
+
+
+def _copy_turn(turn: dict) -> dict:
+    return {
+        "user_text": turn.get("user_text"),
+        "assistant_message": turn.get("assistant_message"),
+        "status": turn.get("status"),
+        "intent": turn.get("intent"),
+        "actions": [dict(action) for action in turn.get("actions", [])],
+        "events": [dict(event) for event in turn.get("events", [])],
     }
