@@ -13,7 +13,7 @@ from .schemas import (
     CalendarAction,
 )
 from ..logging_config import get_logger
-from ..event_service import create_event, delete_event, list_events, update_event
+from ..event_service import create_event, delete_event, get_event, list_events, update_event
 
 logger = get_logger("agent.executor")
 
@@ -160,6 +160,14 @@ def _delete_all_candidates(user_id: int, candidates: list[dict]) -> list[dict]:
 
 def _find_candidates(user_id: int, selector: dict) -> list[dict]:
     logger.info("executor_find_candidates user_id=%s selector=%s", user_id, selector)
+    selected_event_id = selector.get("event_id") or selector.get("series_id") or selector.get("id")
+
+    if selected_event_id:
+        event = _get_selected_event(user_id, selected_event_id)
+        candidates = [event] if event else []
+        logger.info("executor_candidates_result user_id=%s count=%s exact_id=true", user_id, len(candidates))
+        return candidates
+
     filters = {}
 
     if selector.get("start") and selector.get("end"):
@@ -200,6 +208,23 @@ def _find_candidates(user_id: int, selector: dict) -> list[dict]:
 
 def _normalize_match_text(value: str) -> str:
     return value.replace("的", "").replace(" ", "").strip()
+
+
+def _get_selected_event(user_id: int, event_id) -> dict | None:
+    try:
+        selected_id = int(event_id)
+    except (TypeError, ValueError):
+        return None
+
+    event = get_event(user_id, selected_id)
+
+    if not event:
+        return None
+
+    event["series_id"] = event["id"]
+    event["is_recurring"] = event["recurrence_type"] != "none"
+
+    return event
 
 
 def _not_found_result(action_type: str) -> dict:

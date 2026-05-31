@@ -64,6 +64,66 @@ class PlannerExistingEventsTest(unittest.TestCase):
         self.assertEqual(plan.actions[0].arguments["updates"]["title"], "考雅思")
         self.assertEqual(plan.actions[1].arguments["updates"]["title"], "安装电动升降桌")
 
+    def test_plan_calendar_actions_passes_recent_events_for_references(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+        captured_payload = {}
+
+        def fake_invoke_json(_prompt, payload):
+            captured_payload.update(payload)
+            return {
+                "reply": None,
+                "actions": [
+                    {
+                        "type": "update_event",
+                        "confidence": 0.99,
+                        "arguments": {
+                            "selector": {"event_id": 4},
+                            "updates": {
+                                "start_time": "2026-06-01T15:00:00+08:00",
+                                "end_time": "2026-06-01T16:00:00+08:00",
+                            },
+                        },
+                    }
+                ],
+            }
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            plan = parser.plan_calendar_actions(
+                "把我刚刚说的会议时间改到3点",
+                "Asia/Shanghai",
+                existing_events=[
+                    {"id": 1, "title": "会议1"},
+                    {"id": 2, "title": "会议2"},
+                    {"id": 3, "title": "会议3"},
+                    {"id": 4, "title": "会议4"},
+                ],
+                recent_events=[
+                    {
+                        "id": 4,
+                        "title": "会议4",
+                        "start_time": "2026-06-01T14:00:00+08:00",
+                        "end_time": "2026-06-01T15:00:00+08:00",
+                    }
+                ],
+                recent_turns=[
+                    {
+                        "user_text": "添加一个会议4",
+                        "assistant_message": "已创建日程：会议4。",
+                        "status": "success",
+                        "intent": "calendar",
+                        "actions": [{"type": "create_event", "arguments": {"title": "会议4"}}],
+                        "events": [{"id": 4, "title": "会议4"}],
+                    }
+                ],
+            )
+
+        self.assertEqual(captured_payload["recent_events"][0]["id"], 4)
+        self.assertEqual(captured_payload["recent_events"][0]["title"], "会议4")
+        self.assertEqual(captured_payload["recent_turns"][0]["user_text"], "添加一个会议4")
+        self.assertEqual(captured_payload["recent_turns"][0]["events"][0]["id"], 4)
+        self.assertEqual(plan.actions[0].arguments["selector"]["event_id"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()
