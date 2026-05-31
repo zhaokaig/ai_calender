@@ -506,9 +506,10 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
 
     try {
       const transcribed = await transcribeAudio(audioBlob, mimeType, token);
-      const transcript = transcribed.text || "";
+      const transcript = transcribed.raw_text || transcribed.text || "";
+      const commandText = transcribed.text || transcript;
       setAssistantStatus("正在处理");
-      const commandResult = await runVoiceCommand(transcribed.text, token);
+      const commandResult = await runVoiceCommand(commandText, token);
       await onCommandComplete();
       setMessages((current) => [
         ...current,
@@ -516,7 +517,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
         {
           role: "assistant",
           text: commandResult.message || "后端处理完成，日历已刷新。",
-          transcript,
+          transcript: commandText,
           result: commandResult,
         },
       ]);
