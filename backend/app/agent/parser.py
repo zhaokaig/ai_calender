@@ -186,6 +186,44 @@ def generate_smalltalk_reply(text: str, timezone: str) -> str:
     return reply
 
 
+def generate_calendar_reply(
+    original_text: str,
+    rewritten_text: str,
+    timezone: str,
+    response: dict,
+) -> str:
+    logger.info(
+        "calendar_reply_start status=%s result_count=%s timezone=%s",
+        response.get("status"),
+        len(response.get("results", [])),
+        timezone,
+    )
+
+    if not current_app.config.get("OPENAI_API_KEY"):
+        logger.error("calendar_reply_failed reason=missing_api_key")
+        return response.get("message") or "日程操作已经处理完成。"
+
+    try:
+        payload = _invoke_json(
+            _calendar_reply_prompt(),
+            {
+                "original_text": original_text,
+                "rewritten_text": rewritten_text,
+                "timezone": timezone,
+                "current_datetime": _current_datetime(timezone),
+                "response": response,
+            },
+        )
+    except Exception:
+        logger.exception("calendar_reply_failed reason=llm_error")
+        return response.get("message") or "日程操作已经处理完成。"
+
+    reply = str(payload.get("reply") or response.get("message") or "日程操作已经处理完成。").strip()
+    logger.info("calendar_reply_success reply_length=%s", len(reply))
+
+    return reply
+
+
 def parse_command(text: str, timezone: str) -> ActionPlan:
     intent_plan = classify_intent(text, timezone)
 
@@ -375,4 +413,24 @@ def _smalltalk_prompt() -> str:
 - 如果用户在闲聊，简短回应即可。
 - 合适时自然引导用户说出日历指令。
 - 不要声称自己已经执行了日程操作。
+""".strip()
+
+
+def _calendar_reply_prompt() -> str:
+    return """
+你是语音日历助手的“结果回复”节点。你只能返回 JSON，不要输出解释文字。
+
+输出结构：
+{
+  "reply": string
+}
+
+规则：
+- 根据工具执行结果给用户一个简短、自然的中文回复。
+- 不要编造工具结果中不存在的日程、时间或状态。
+- 如果是创建、修改、删除成功，用一句话确认完成。
+- 如果是查询，像人一样概括查询结果，例如“今天上午10点要开会，下午3点半要写周报。”
+- 如果工具返回 not_found 或 needs_selection，要直接说明问题并让用户补充信息。
+- 多个操作都成功时，可以合并成一句简短总结。
+- 不要提到 JSON、工具调用、节点或内部流程。
 """.strip()

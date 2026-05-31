@@ -36,6 +36,31 @@ class PlannerExistingEventsTest(unittest.TestCase):
         self.assertIn("date", plan.actions[0].arguments)
         self.assertEqual(plan.actions[0].arguments["period_label"], "今天")
 
+    def test_generate_calendar_reply_uses_tool_results(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+        captured_payload = {}
+
+        def fake_invoke_json(_prompt, payload):
+            captured_payload.update(payload)
+            return {"reply": "今天上午十点要开会。"}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            reply = parser.generate_calendar_reply(
+                "今天有什么事",
+                "今天有什么事",
+                "Asia/Shanghai",
+                {
+                    "status": "success",
+                    "message": "今天有 1 个日程：上午10点开会。",
+                    "results": [{"status": "success", "message": "今天有 1 个日程：上午10点开会。"}],
+                },
+            )
+
+        self.assertEqual(reply, "今天上午十点要开会。")
+        self.assertEqual(captured_payload["response"]["status"], "success")
+        self.assertEqual(captured_payload["rewritten_text"], "今天有什么事")
+
     def test_plan_calendar_actions_falls_back_for_week_query(self):
         app = create_app()
         app.config["OPENAI_API_KEY"] = "test-key"

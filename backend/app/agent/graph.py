@@ -7,7 +7,7 @@ from ..event_service import list_events
 from ..logging_config import get_logger
 from .executor import execute_plan
 from .memory import get_recent_events, get_recent_turns, remember_events, remember_turn
-from .parser import classify_intent, recognize_event_tasks
+from .parser import classify_intent, generate_calendar_reply, recognize_event_tasks
 from .schemas import CALENDAR_INTENT, AgentResponse, SMALLTALK_INTENT, SUCCESS, UNSUPPORTED, ActionPlan, IntentResult
 
 logger = get_logger("agent.graph")
@@ -46,6 +46,7 @@ def _build_graph():
     graph.add_node("intent_classifier", _intent_classifier)
     graph.add_node("event_recognizer", _event_recognizer)
     graph.add_node("tool_executor", _tool_executor)
+    graph.add_node("response_generator", _response_generator)
     graph.add_node("chat_responder", _chat_responder)
     graph.add_node("response_composer", _response_composer)
 
@@ -59,7 +60,8 @@ def _build_graph():
         },
     )
     graph.add_edge("event_recognizer", "tool_executor")
-    graph.add_edge("tool_executor", "response_composer")
+    graph.add_edge("tool_executor", "response_generator")
+    graph.add_edge("response_generator", "response_composer")
     graph.add_edge("chat_responder", "response_composer")
     graph.add_edge("response_composer", END)
 
@@ -107,6 +109,29 @@ def _tool_executor(state: VoiceCommandState) -> dict[str, Any]:
 
     return {
         "response": response
+    }
+
+
+def _response_generator(state: VoiceCommandState) -> dict[str, Any]:
+    logger.info("graph_node_start node=response_generator user_id=%s", state["user_id"])
+    response = state["response"]
+    message = generate_calendar_reply(
+        state["text"],
+        state["rewritten_text"],
+        state["timezone"],
+        response.to_dict(),
+    )
+
+    return {
+        "response": AgentResponse(
+            intent=response.intent,
+            status=response.status,
+            message=message,
+            actions=response.actions,
+            results=response.results,
+            events=response.events,
+            candidates=response.candidates,
+        )
     }
 
 
