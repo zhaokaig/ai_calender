@@ -1,4 +1,5 @@
 import unittest
+from datetime import timedelta
 from unittest.mock import patch
 
 from app.factory import create_app
@@ -20,6 +21,26 @@ class PlannerExistingEventsTest(unittest.TestCase):
         self.assertEqual(len(plan.actions), 1)
         self.assertEqual(plan.actions[0].type, QUERY_EVENTS)
         self.assertIn("date", plan.actions[0].arguments)
+        self.assertEqual(plan.actions[0].arguments["period_label"], "今天")
+
+    def test_plan_calendar_actions_falls_back_for_week_query(self):
+        app = create_app()
+        app.config["OPENAI_API_KEY"] = "test-key"
+
+        def fake_invoke_json(_prompt, _payload):
+            return {"reply": None, "actions": []}
+
+        with app.app_context(), patch.object(parser, "_invoke_json", side_effect=fake_invoke_json):
+            plan = parser.plan_calendar_actions("这周有什么事要做", "Asia/Shanghai")
+
+        start_time = parser.datetime.fromisoformat(plan.actions[0].arguments["start"])
+        end_time = parser.datetime.fromisoformat(plan.actions[0].arguments["end"])
+
+        self.assertEqual(plan.actions[0].type, QUERY_EVENTS)
+        self.assertEqual(plan.actions[0].arguments["period_label"], "这周")
+        self.assertEqual(start_time.utcoffset(), timedelta(hours=8))
+        self.assertEqual((end_time - start_time).days, 7)
+        self.assertEqual(start_time.weekday(), 0)
 
     def test_plan_calendar_actions_passes_existing_events_for_updates(self):
         app = create_app()

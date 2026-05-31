@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import current_app
@@ -108,23 +108,45 @@ def plan_calendar_actions(
 
 def _fallback_query_action(text: str, timezone: str) -> dict | None:
     compact_text = text.replace(" ", "")
+    now = datetime.now(ZoneInfo(timezone))
 
-    if not _looks_like_today_query(compact_text):
-        return None
+    if _looks_like_week_query(compact_text):
+        start = datetime.combine(now.date() - timedelta(days=now.weekday()), time.min, tzinfo=now.tzinfo)
+        end = start + timedelta(days=7)
 
-    return {
-        "type": QUERY_EVENTS,
-        "confidence": 0.6,
-        "arguments": {
-            "date": datetime.now(ZoneInfo(timezone)).date().isoformat(),
-        },
-    }
+        return {
+            "type": QUERY_EVENTS,
+            "confidence": 0.6,
+            "arguments": {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "period_label": "这周",
+            },
+        }
+
+    if _looks_like_today_query(compact_text):
+        return {
+            "type": QUERY_EVENTS,
+            "confidence": 0.6,
+            "arguments": {
+                "date": now.date().isoformat(),
+                "period_label": "今天",
+            },
+        }
+
+    return None
 
 
 def _looks_like_today_query(text: str) -> bool:
     return "今天" in text and (
         any(marker in text for marker in ("什么", "哪些", "有啥", "有什么", "安排", "日程", "事情", "事项"))
         or any(marker in text for marker in ("以下事项", "以下日程", "有以下"))
+    )
+
+
+def _looks_like_week_query(text: str) -> bool:
+    return any(marker in text for marker in ("这周", "本周", "这一周")) and any(
+        marker in text for marker in ("什么", "哪些", "有啥", "有什么", "安排", "日程", "事情", "事项", "要做")
     )
 
 
@@ -270,7 +292,8 @@ def _planner_prompt() -> str:
 - 创建或修改事件时，如果用户没有说明 end_time，则设为 start_time 后一小时。
 - 如果用户说每天、每周、每月，按语义设置 recurrence_type。
 - 如果用户明确要求删除某天所有事件，设置 selector.all 为 true，keywords 设为空数组。
-- “今天都有什么事情/今天有哪些安排/今天有什么日程”这类问题必须输出 query_events，arguments.date 为今天。
+- “今天都有什么事情/今天有哪些安排/今天有什么日程”这类问题必须输出 query_events，arguments.date 为今天，period_label 为“今天”。
+- “这周有什么事/本周有哪些安排/这周有什么要做”这类问题必须输出 query_events，arguments.start/end 为本周周一 00:00 到下周周一 00:00，period_label 为“这周”。
 - 如果输入看起来像“今天有以下事项：”这类回答开头，也应按 query_events 处理，因为它可能来自语音清洗误改写。
 - 如果是删除/修改单个具名事件，用户提到日期或时间时要放入 selector，并从事件标题、人名、地点中提取有意义的 keywords。
 - 如果用户说“这周/某一周/本次/这节课取消或修改”，并且目标是循环日程中的一次，设置 selector.scope 为 occurrence。
