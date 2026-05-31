@@ -408,6 +408,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
   const [recordingMode, setRecordingMode] = useState(null);
   const [recordedAudio, setRecordedAudio] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [assistantStatus, setAssistantStatus] = useState("");
   const [isTextInputOpen, setIsTextInputOpen] = useState(false);
   const [textCommand, setTextCommand] = useState("");
 
@@ -450,11 +451,9 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       mediaRecorder.start();
       setRecordingMode(mode);
       setRecordedAudio(null);
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", text: mode === "short" ? "按住录音中，松开后发送。" : "长录音开始，再次点击可停止。" },
-      ]);
+      setAssistantStatus(mode === "short" ? "正在录音" : "长录音进行中");
     } catch (error) {
+      setAssistantStatus("");
       setMessages((current) => [
         ...current,
         { role: "assistant", text: toUserMessage(error, "我现在打不开麦克风，请检查浏览器的麦克风权限。") },
@@ -480,10 +479,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
 
     if (recordingMode) {
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", text: "请先停止当前录音。" },
-      ]);
+      setAssistantStatus("请先结束当前录音");
       return;
     }
 
@@ -505,24 +501,22 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
   };
 
   const processRecordedAudio = async (audioBlob, mimeType, mode) => {
-    const label = mode === "short" ? "短录音" : "长录音";
     setIsProcessingAudio(true);
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: `${label}已完成` },
-      { role: "assistant", text: "正在发送录音到后端处理..." },
-    ]);
+    setAssistantStatus("正在识别");
 
     try {
       const transcribed = await transcribeAudio(audioBlob, mimeType, token);
+      const transcript = transcribed.text || "";
+      setAssistantStatus("正在处理");
       const commandResult = await runVoiceCommand(transcribed.text, token);
       await onCommandComplete();
       setMessages((current) => [
         ...current,
+        { role: "user", text: transcript || "（未识别到内容）" },
         {
           role: "assistant",
           text: commandResult.message || "后端处理完成，日历已刷新。",
-          transcript: transcribed.text,
+          transcript,
           result: commandResult,
         },
       ]);
@@ -538,6 +532,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       ]);
     } finally {
       setIsProcessingAudio(false);
+      setAssistantStatus("");
     }
   };
 
@@ -554,11 +549,11 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
 
     setIsProcessingAudio(true);
+    setAssistantStatus("正在处理");
     setTextCommand("");
     setMessages((current) => [
       ...current,
       { role: "user", text: commandText },
-      { role: "assistant", text: "正在发送文字指令到后端处理..." },
     ]);
 
     try {
@@ -585,6 +580,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       ]);
     } finally {
       setIsProcessingAudio(false);
+      setAssistantStatus("");
     }
   };
 
@@ -611,6 +607,13 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           </div>
         ))}
       </div>
+
+      {assistantStatus ? (
+        <div className="assistant-status" aria-live="polite">
+          <span />
+          {assistantStatus}
+        </div>
+      ) : null}
 
       <div className="input-actions">
         <button
@@ -666,7 +669,6 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
         <p className="recording-status">
           最近录音：{recordedAudio.mode === "short" ? "短录音" : "长录音"}，
           {Math.max(1, Math.round(recordedAudio.blob.size / 1024))} KB
-          {isProcessingAudio ? "，处理中" : ""}
         </p>
       ) : null}
     </section>

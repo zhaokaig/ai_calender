@@ -83,7 +83,7 @@ def transcribe_audio(file_storage) -> str:
             )
         except OpenAIError as error:
             logger.exception("asr_transcribe_failed filename=%s reason=openai_error", filename)
-            raise AudioTranscriptionError("语音识别服务刚才没有响应，请再试一次。") from error
+            raise AudioTranscriptionError("刚才没能听清这段录音，请再说一遍吧。") from error
 
     text = completion.choices[0].message.content or ""
 
