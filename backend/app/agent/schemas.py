@@ -33,6 +33,35 @@ ERROR = "error"
 
 
 @dataclass
+class IntentResult:
+    intent: str
+    text: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "IntentResult":
+        intent = data.get("intent")
+
+        if intent not in SUPPORTED_INTENTS:
+            raise ValueError(f"unsupported intent: {intent}")
+
+        text = data.get("text")
+
+        if text is not None and not isinstance(text, str):
+            raise ValueError("intent text must be a string")
+
+        return cls(intent=intent, text=text)
+
+    def to_action_plan(self) -> "ActionPlan":
+        return ActionPlan(intent=self.intent, reply=self.text)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "text": self.text,
+        }
+
+
+@dataclass
 class CalendarAction:
     type: str
     arguments: dict[str, Any] = field(default_factory=dict)
