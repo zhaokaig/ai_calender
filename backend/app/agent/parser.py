@@ -227,7 +227,8 @@ def _planner_prompt() -> str:
 - query_events 的 arguments 使用：date 或 start/end，可附加 keywords。
 - update_event 的 arguments 使用：selector 和 updates。
 - delete_event 的 arguments 使用：selector。
-- selector 可包含：date、start、end、keywords、all。
+- selector 可包含：date、start、end、keywords、all、event_id、scope、from。
+- selector.scope 可选：series、occurrence、future。默认 series 表示整条日程或整条循环；occurrence 表示只处理某一次循环；future 表示从 selector.from 或 selector.start 对应的那次开始处理之后所有循环。
 - recurrence_type 只能是：none、daily、weekly、monthly。
 - recurrence_interval 默认是 1。
 - 时间必须使用带有用户 timezone 的 ISO datetime 字符串。
@@ -235,6 +236,8 @@ def _planner_prompt() -> str:
 - 如果用户说每天、每周、每月，按语义设置 recurrence_type。
 - 如果用户明确要求删除某天所有事件，设置 selector.all 为 true，keywords 设为空数组。
 - 如果是删除/修改单个具名事件，用户提到日期或时间时要放入 selector，并从事件标题、人名、地点中提取有意义的 keywords。
+- 如果用户说“这周/某一周/本次/这节课取消或修改”，并且目标是循环日程中的一次，设置 selector.scope 为 occurrence。
+- 如果用户说“从下周开始/某天之后/以后都不用/之后取消”，并且目标是循环日程，设置 selector.scope 为 future，并设置 selector.from 为开始删除之后循环的那次 start_time。
 - 必须保留所有人名、公司名、地点、事件名、专有名词、可能的错别字，以及用户自己的表达。
 - 输入 JSON 里会提供 existing_events，表示用户近期已有日程，可用于判断用户是在修改已有日程。
 - 输入 JSON 里会提供 recent_events，表示当前对话里刚刚创建、修改或查询过的日程，按从新到旧排序。它是短期记忆，优先级高于 existing_events。
@@ -265,6 +268,14 @@ def _planner_prompt() -> str:
 输入文本：删除明天所有日程
 输出动作：
 - 删除事件：selector.date 为明天，selector.all 为 true，selector.keywords 为空数组
+
+输入文本：这周的课程取消
+输出动作：
+- 删除事件：selector.scope 为 occurrence，selector.date 为这周课程当天，selector.keywords 为 ["课程"]
+
+输入文本：从下周开始就不用上课了
+输出动作：
+- 删除事件：selector.scope 为 future，selector.from 为下周课程开始时间，selector.keywords 为 ["上课", "课程"]
 
 输入文本：今天的考试是雅思考试，安装的家具是电动升降桌
 已有日程：考试 16:00-17:00，安装家具 20:00-21:00

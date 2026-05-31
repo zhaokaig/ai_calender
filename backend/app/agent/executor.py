@@ -13,7 +13,16 @@ from .schemas import (
     CalendarAction,
 )
 from ..logging_config import get_logger
-from ..event_service import create_event, delete_event, get_event, list_events, update_event
+from ..event_service import (
+    create_event,
+    delete_event,
+    delete_event_occurrence,
+    get_event,
+    list_events,
+    truncate_recurring_event,
+    update_event,
+    update_event_occurrence,
+)
 
 logger = get_logger("agent.executor")
 
@@ -85,7 +94,8 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         }
 
     if action.type == UPDATE_EVENT:
-        candidates = _find_candidates(user_id, action.arguments.get("selector", {}))
+        selector = action.arguments.get("selector", {})
+        candidates = _find_candidates(user_id, selector)
 
         if not candidates:
             return _not_found_result(action.type)
@@ -93,11 +103,19 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         if len(candidates) > 1:
             return _needs_selection_result(action.type, candidates)
 
-        updated_event = update_event(
-            user_id,
-            candidates[0]["series_id"],
-            action.arguments.get("updates", {}),
-        )
+        if selector.get("scope") == "occurrence" and candidates[0].get("is_recurring"):
+            updated_event = update_event_occurrence(
+                user_id,
+                candidates[0]["series_id"],
+                candidates[0]["occurrence_start_time"],
+                action.arguments.get("updates", {}),
+            )
+        else:
+            updated_event = update_event(
+                user_id,
+                candidates[0]["series_id"],
+                action.arguments.get("updates", {}),
+            )
         return {
             "action": action.type,
             "status": SUCCESS,
@@ -124,12 +142,30 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
         if len(candidates) > 1:
             return _needs_selection_result(action.type, candidates)
 
-        delete_event(user_id, candidates[0]["series_id"])
+        if selector.get("scope") == "occurrence" and candidates[0].get("is_recurring"):
+            deleted_event = delete_event_occurrence(
+                user_id,
+                candidates[0]["series_id"],
+                candidates[0]["occurrence_start_time"],
+            )
+            message = f"已取消本次日程：{candidates[0]['title']}。"
+        elif selector.get("scope") == "future" and candidates[0].get("is_recurring"):
+            deleted_event = truncate_recurring_event(
+                user_id,
+                candidates[0]["series_id"],
+                selector.get("from") or selector.get("start") or candidates[0]["occurrence_start_time"],
+            )
+            message = f"已删除之后的循环日程：{candidates[0]['title']}。"
+        else:
+            delete_event(user_id, candidates[0]["series_id"])
+            deleted_event = candidates[0]
+            message = f"已删除日程：{candidates[0]['title']}。"
+
         return {
             "action": action.type,
             "status": SUCCESS,
-            "message": f"已删除日程：{candidates[0]['title']}。",
-            "events": [candidates[0]],
+            "message": message,
+            "events": [deleted_event or candidates[0]],
         }
 
     return {
