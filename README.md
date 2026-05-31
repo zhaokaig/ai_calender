@@ -90,6 +90,65 @@ cd frontend
 npm run build
 ```
 
+## Docker Compose Deployment
+
+Build the production-style Docker images locally:
+
+```bash
+docker compose build
+```
+
+Initialize the SQLite database in the persistent Docker volume:
+
+```bash
+docker compose run --rm backend flask --app app.main init-db
+```
+
+Start the backend and Nginx services:
+
+```bash
+docker compose up -d
+```
+
+The app is available at:
+
+```text
+http://127.0.0.1:8080
+```
+
+The health check is available at:
+
+```bash
+curl http://127.0.0.1:8080/api/health
+```
+
+Useful operational commands:
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f nginx
+docker compose restart
+docker compose down
+```
+
+For server deployment, create `backend/.env` on the server with production values:
+
+```env
+APP_ENV=production
+SECRET_KEY=replace-with-a-strong-random-secret
+DATABASE_PATH=instance/ai_calender.sqlite
+DASHSCOPE_API_KEY=replace-with-your-dashscope-api-key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ASR_MODEL=qwen3-asr-flash-2026-02-10
+AGENT_MODEL=qwen-plus
+AGENT_TEMPERATURE=0
+LOG_LEVEL=INFO
+LOG_FILE_PATH=instance/ai_calender.log
+```
+
+The default Compose port mapping is `8080:80` for local testing. On a server, change it to `80:80` in `docker-compose.yml` if the container should serve HTTP directly.
+
 ## Voice Command API
 
 PR 3 adds a text-in, action-out agent endpoint. The frontend should send text produced by browser speech recognition or by the backend ASR endpoint.
