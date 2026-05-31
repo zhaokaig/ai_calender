@@ -48,7 +48,7 @@ def classify_intent(text: str, timezone: str) -> ActionPlan:
     return plan
 
 
-def plan_calendar_actions(text: str, timezone: str) -> ActionPlan:
+def plan_calendar_actions(text: str, timezone: str, existing_events: list[dict] | None = None) -> ActionPlan:
     normalized_text = text.strip()
     logger.info("action_plan_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
@@ -63,6 +63,7 @@ def plan_calendar_actions(text: str, timezone: str) -> ActionPlan:
                 "text": normalized_text,
                 "timezone": timezone,
                 "current_datetime": _current_datetime(timezone),
+                "existing_events": _planner_event_context(existing_events or []),
             },
         )
     except Exception:
@@ -140,6 +141,22 @@ def _current_datetime(timezone: str) -> str:
     return datetime.now(ZoneInfo(timezone)).isoformat()
 
 
+def _planner_event_context(events: list[dict], limit: int = 30) -> list[dict]:
+    context = []
+
+    for event in events[:limit]:
+        context.append(
+            {
+                "id": event.get("series_id") or event.get("id"),
+                "title": event.get("title"),
+                "start_time": event.get("start_time"),
+                "end_time": event.get("end_time"),
+            }
+        )
+
+    return context
+
+
 def _intent_prompt() -> str:
     return """
 你是语音日历助手的“意图识别”节点。你只能返回 JSON，不要输出解释文字。
@@ -193,6 +210,10 @@ def _planner_prompt() -> str:
 - 如果用户明确要求删除某天所有事件，设置 selector.all 为 true，keywords 设为空数组。
 - 如果是删除/修改单个具名事件，用户提到日期或时间时要放入 selector，并从事件标题、人名、地点中提取有意义的 keywords。
 - 必须保留所有人名、公司名、地点、事件名、专有名词、可能的错别字，以及用户自己的表达。
+- 输入 JSON 里会提供 existing_events，表示用户近期已有日程，可用于判断用户是在修改已有日程。
+- 当用户说“X 是 Y”、“X 改成 Y”、“把 X 改为 Y”、“X 其实是 Y”、“X 不是 A 是 B”这类纠正或补充时，如果 existing_events 中有标题能被 X 匹配的日程，必须输出 update_event，不要输出 create_event。
+- 这类 update_event 的 selector.keywords 使用原日程关键词 X；如果 existing_events 里匹配到该日程，selector 也应带上它的日期或 start/end，updates.title 使用修改后的完整新标题 Y。
+- 不要为了“考试是雅思考试”“安装的家具是电动升降桌”这类表达创建同时间的新日程；应把已有“考试”改为“考雅思”或“雅思考试”，把已有“安装家具”改为“安装电动升降桌”。
 
 多任务规则：
 - actions 必须始终是数组。
@@ -212,6 +233,12 @@ def _planner_prompt() -> str:
 输入文本：删除明天所有日程
 输出动作：
 - 删除事件：selector.date 为明天，selector.all 为 true，selector.keywords 为空数组
+
+输入文本：今天的考试是雅思考试，安装的家具是电动升降桌
+已有日程：考试 16:00-17:00，安装家具 20:00-21:00
+输出动作：
+- 修改事件：selector.keywords 为 ["考试"]，updates.title 为 "考雅思" 或 "雅思考试"
+- 修改事件：selector.keywords 为 ["安装家具"]，updates.title 为 "安装电动升降桌"
 
 规则：
 - 不要执行任何操作，只做计划。

@@ -3,6 +3,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from ..event_service import list_events
 from ..logging_config import get_logger
 from .executor import execute_plan
 from .parser import classify_intent, generate_smalltalk_reply, plan_calendar_actions
@@ -75,7 +76,8 @@ def _route_after_intent(state: VoiceCommandState) -> str:
 
 def _action_planner(state: VoiceCommandState) -> dict[str, Any]:
     logger.info("graph_node_start node=action_planner user_id=%s", state["user_id"])
-    plan = plan_calendar_actions(state["text"], state["timezone"])
+    existing_events = list_events(state["user_id"], {})
+    plan = plan_calendar_actions(state["text"], state["timezone"], existing_events)
     logger.info("graph_node_finish node=action_planner action_count=%s", len(plan.actions))
     return {"plan": plan}
 
