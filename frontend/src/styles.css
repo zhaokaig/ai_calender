@@ -261,6 +261,7 @@ h2 {
   max-width: 1440px;
   margin: 0 auto;
   align-items: start;
+  min-height: 0;
 }
 
 .calendar-surface,
@@ -392,12 +393,25 @@ h2 {
 
 .side-panel {
   display: grid;
+  grid-template-rows: minmax(180px, 0.42fr) minmax(300px, 0.58fr);
   gap: 18px;
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 48px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .day-panel,
 .chat-panel {
+  min-height: 0;
+  overflow: hidden;
   padding: 16px;
+}
+
+.day-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .panel-title-row,
@@ -416,8 +430,25 @@ h2 {
 
 .event-list {
   display: grid;
+  align-content: start;
   gap: 8px;
   margin-top: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.event-list::-webkit-scrollbar,
+.message-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.event-list::-webkit-scrollbar-thumb,
+.message-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c2ccdc;
 }
 
 .event-row {
@@ -458,18 +489,20 @@ h2 {
 }
 
 .chat-panel {
-  min-height: 360px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
 }
 
 .message-list {
   display: flex;
-  min-height: 180px;
+  min-height: 0;
   flex-direction: column;
   gap: 10px;
-  margin: 16px 0;
+  margin: 16px 0 10px;
   overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .message {
@@ -701,6 +734,13 @@ h2 {
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    position: static;
+    grid-template-rows: minmax(220px, auto) minmax(360px, 56vh);
+    max-height: none;
+    overflow: visible;
   }
 
   .calendar-grid {
