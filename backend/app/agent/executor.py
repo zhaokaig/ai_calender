@@ -32,7 +32,7 @@ def execute_plan(user_id: int, plan) -> AgentResponse:
         return AgentResponse(
             intent=plan.intent,
             status=ERROR,
-            message="我没有识别到可执行的日程操作。",
+            message="我没听出要执行的日程操作，请说清楚要创建、查询、修改还是删除日程。",
             actions=plan.actions,
         )
 
@@ -135,7 +135,7 @@ def _execute_action(user_id: int, action: CalendarAction) -> dict:
     return {
         "action": action.type,
         "status": ERROR,
-        "message": "暂不支持这个日程操作。",
+        "message": "这个日程操作我现在还不会做，可以先试试创建、查询、修改或删除日程。",
     }
 
 
@@ -206,7 +206,7 @@ def _not_found_result(action_type: str) -> dict:
     return {
         "action": action_type,
         "status": NOT_FOUND,
-        "message": "没有找到匹配的日程。",
+        "message": "我没找到匹配的日程。可以换个时间、标题或说得更具体一点。",
         "events": [],
         "candidates": [],
     }
@@ -216,7 +216,7 @@ def _needs_selection_result(action_type: str, candidates: list[dict]) -> dict:
     return {
         "action": action_type,
         "status": NEEDS_SELECTION,
-        "message": "我找到了多个可能的日程，请选择一个。",
+        "message": "我找到了多个可能的日程，不确定你指哪一个，请再说得更具体一点。",
         "events": [],
         "candidates": candidates,
     }
@@ -224,7 +224,7 @@ def _needs_selection_result(action_type: str, candidates: list[dict]) -> dict:
 
 def _query_message(events: list[dict]) -> str:
     if not events:
-        return "没有找到相关日程。"
+        return "这段时间没有找到日程。"
 
     if len(events) == 1:
         return f"找到 1 个日程：{events[0]['title']}。"
@@ -234,7 +234,7 @@ def _query_message(events: list[dict]) -> str:
 
 def _compose_message(results: list[dict]) -> str:
     if not results:
-        return "我没有执行任何操作。"
+        return "我没有执行任何操作，请再说一次你的日程需求。"
 
     if len(results) == 1:
         return results[0]["message"]

@@ -18,11 +18,11 @@ def classify_intent(text: str, timezone: str) -> ActionPlan:
 
     if not normalized_text:
         logger.warning("intent_classify_unclear reason=empty_text")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="我没有听清楚。你可以试试说：“明天下午三点开会”。")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="你说话了吗？我没听见，再说一遍吧。")
 
     if not current_app.config.get("OPENAI_API_KEY"):
         logger.error("intent_classify_failed reason=missing_api_key")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="当前没有配置可用的 Agent 模型 API Key，暂时无法理解指令。")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="日程助手还没有配置好，暂时不能理解语音或文字指令。")
 
     try:
         payload = _invoke_json(
@@ -35,7 +35,7 @@ def classify_intent(text: str, timezone: str) -> ActionPlan:
         )
     except Exception:
         logger.exception("intent_classify_failed reason=llm_error")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="我暂时没能理解这句话，请再说一次日程需求。")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="我刚才没理解清楚，请换个说法再说一次日程需求。")
     plan = ActionPlan.from_dict(
         {
             "intent": payload.get("intent"),
@@ -54,7 +54,7 @@ def plan_calendar_actions(text: str, timezone: str) -> ActionPlan:
 
     if not current_app.config.get("OPENAI_API_KEY"):
         logger.error("action_plan_failed reason=missing_api_key")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="当前没有配置可用的 Agent 模型 API Key，暂时无法提取日程任务。")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="日程助手还没有配置好，暂时不能提取日程任务。")
 
     try:
         payload = _invoke_json(
@@ -67,7 +67,7 @@ def plan_calendar_actions(text: str, timezone: str) -> ActionPlan:
         )
     except Exception:
         logger.exception("action_plan_failed reason=llm_error")
-        return ActionPlan(intent=UNCLEAR_INTENT, reply="我暂时没能提取出日程任务，请换一种说法再试一次。")
+        return ActionPlan(intent=UNCLEAR_INTENT, reply="我没能提取出具体日程，请说清楚时间和要做的事。")
     plan = ActionPlan.from_dict(
         {
             "intent": CALENDAR_INTENT,

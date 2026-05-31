@@ -75,7 +75,7 @@ function AuthPage({ onAuthenticated }) {
       });
       onAuthenticated(payload);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(toUserMessage(requestError, "登录或注册失败，请检查用户名和密码后再试。"));
     } finally {
       setIsLoading(false);
     }
@@ -169,7 +169,7 @@ function CalendarPage({ token, user, onLogout }) {
         onLogout();
         return;
       }
-      setError(requestError.message);
+      setError(toUserMessage(requestError, "日程加载失败，请稍后再试。"));
     } finally {
       setIsLoading(false);
     }
@@ -408,6 +408,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
   const [recordingMode, setRecordingMode] = useState(null);
   const [recordedAudio, setRecordedAudio] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [assistantStatus, setAssistantStatus] = useState("");
   const [isTextInputOpen, setIsTextInputOpen] = useState(false);
   const [textCommand, setTextCommand] = useState("");
 
@@ -450,14 +451,12 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
       mediaRecorder.start();
       setRecordingMode(mode);
       setRecordedAudio(null);
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", text: mode === "short" ? "按住录音中，松开后发送。" : "长录音开始，再次点击可停止。" },
-      ]);
+      setAssistantStatus(mode === "short" ? "正在录音" : "长录音进行中");
     } catch (error) {
+      setAssistantStatus("");
       setMessages((current) => [
         ...current,
-        { role: "assistant", text: `无法开始录音：${error.message}` },
+        { role: "assistant", text: toUserMessage(error, "我现在打不开麦克风，请检查浏览器的麦克风权限。") },
       ]);
     }
   };
@@ -480,10 +479,7 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     }
 
     if (recordingMode) {
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", text: "请先停止当前录音。" },
-      ]);
+      setAssistantStatus("请先结束当前录音");
       return;
     }
 
@@ -505,24 +501,22 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
   };
 
   const processRecordedAudio = async (audioBlob, mimeType, mode) => {
-    const label = mode === "short" ? "短录音" : "长录音";
     setIsProcessingAudio(true);
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: `${label}已完成` },
-      { role: "assistant", text: "正在发送录音到后端处理..." },
-    ]);
+    setAssistantStatus("正在识别");
 
     try {
       const transcribed = await transcribeAudio(audioBlob, mimeType, token);
+      const transcript = transcribed.text || "";
+      setAssistantStatus("正在处理");
       const commandResult = await runVoiceCommand(transcribed.text, token);
       await onCommandComplete();
       setMessages((current) => [
         ...current,
+        { role: "user", text: transcript || "（未识别到内容）" },
         {
           role: "assistant",
           text: commandResult.message || "后端处理完成，日历已刷新。",
-          transcript: transcribed.text,
+          transcript,
           result: commandResult,
         },
       ]);
@@ -534,10 +528,11 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
 
       setMessages((current) => [
         ...current,
-        { role: "assistant", text: `录音处理失败：${error.message}` },
+        { role: "assistant", text: toUserMessage(error, "录音处理失败，请再说一遍。") },
       ]);
     } finally {
       setIsProcessingAudio(false);
+      setAssistantStatus("");
     }
   };
 
@@ -546,15 +541,19 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
     const commandText = textCommand.trim();
 
     if (!commandText) {
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", text: "你还没有输入内容，先写一句日程需求吧。" },
+      ]);
       return;
     }
 
     setIsProcessingAudio(true);
+    setAssistantStatus("正在处理");
     setTextCommand("");
     setMessages((current) => [
       ...current,
       { role: "user", text: commandText },
-      { role: "assistant", text: "正在发送文字指令到后端处理..." },
     ]);
 
     try {
@@ -577,10 +576,11 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
 
       setMessages((current) => [
         ...current,
-        { role: "assistant", text: `文字指令处理失败：${error.message}` },
+        { role: "assistant", text: toUserMessage(error, "文字指令处理失败，请换个说法再试一次。") },
       ]);
     } finally {
       setIsProcessingAudio(false);
+      setAssistantStatus("");
     }
   };
 
@@ -607,6 +607,13 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
           </div>
         ))}
       </div>
+
+      {assistantStatus ? (
+        <div className="assistant-status" aria-live="polite">
+          <span />
+          {assistantStatus}
+        </div>
+      ) : null}
 
       <div className="input-actions">
         <button
@@ -662,7 +669,6 @@ function ChatPanel({ token, onUnauthorized, onCommandComplete }) {
         <p className="recording-status">
           最近录音：{recordedAudio.mode === "short" ? "短录音" : "长录音"}，
           {Math.max(1, Math.round(recordedAudio.blob.size / 1024))} KB
-          {isProcessingAudio ? "，处理中" : ""}
         </p>
       ) : null}
     </section>
@@ -748,7 +754,7 @@ function EventModal({ state, onClose, onSave, onDelete }) {
 
       await onSave(payload, editingEvent?.series_id || editingEvent?.id);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(toUserMessage(requestError, "保存日程失败，请检查标题和时间后再试。"));
     } finally {
       setIsSaving(false);
     }
@@ -761,7 +767,7 @@ function EventModal({ state, onClose, onSave, onDelete }) {
     try {
       await onDelete(editingEvent.series_id || editingEvent.id);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(toUserMessage(requestError, "删除日程失败，请稍后再试。"));
       setIsSaving(false);
     }
   };
@@ -867,14 +873,22 @@ function EventModal({ state, onClose, onSave, onDelete }) {
 }
 
 async function apiRequest(path, { method = "GET", body, token } = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    headers: {
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (networkError) {
+    const error = new Error("网络连接失败，请确认后端服务已经启动。");
+    error.cause = networkError;
+    throw error;
+  }
 
   if (response.status === 204) {
     return {};
@@ -896,13 +910,21 @@ async function transcribeAudio(audioBlob, mimeType, token) {
   const formData = new FormData();
   formData.append("file", audioBlob, `recording.${extension}`);
 
-  const response = await fetch(`${API_BASE_URL}/api/transcriptions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: formData,
-  });
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}/api/transcriptions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+  } catch (networkError) {
+    const error = new Error("网络连接失败，请确认后端服务已经启动。");
+    error.cause = networkError;
+    throw error;
+  }
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
@@ -912,6 +934,45 @@ async function transcribeAudio(audioBlob, mimeType, token) {
   }
 
   return payload;
+}
+
+function toUserMessage(error, fallbackMessage) {
+  const message = error?.message || "";
+
+  if (error?.name === "NotAllowedError" || message.includes("Permission denied")) {
+    return "我现在没有麦克风权限，请允许浏览器使用麦克风后再试。";
+  }
+
+  if (error?.name === "NotFoundError") {
+    return "没有找到可用的麦克风，请检查设备后再试。";
+  }
+
+  if (error?.status === 401) {
+    return "登录状态过期了，请重新登录。";
+  }
+
+  if (
+    message.includes("audio file is empty") ||
+    message.includes("empty_transcript") ||
+    message.includes("没听见") ||
+    message.includes("没有收到录音")
+  ) {
+    return "你说话了吗？我没听见，再说一遍吧。";
+  }
+
+  if (message.includes("unsupported audio") || message.includes("录音格式")) {
+    return "这个录音格式我暂时识别不了，换一种方式再试试吧。";
+  }
+
+  if (message.includes("text is required") || message.includes("要处理的内容")) {
+    return "我还没收到要处理的内容，请说一句日程需求或输入文字。";
+  }
+
+  if (message.includes("Failed to fetch") || message.includes("NetworkError") || message.includes("网络连接失败")) {
+    return "网络连接失败，请确认后端服务已经启动。";
+  }
+
+  return message || fallbackMessage;
 }
 
 function runVoiceCommand(text, token) {

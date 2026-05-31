@@ -557,6 +557,42 @@ h2 {
   gap: 8px;
 }
 
+.assistant-status {
+  min-height: 28px;
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: #435066;
+  background: #f1f5fa;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.assistant-status span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2a62d6;
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .input-actions button {
   min-width: 0;
   aspect-ratio: 1;

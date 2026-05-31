@@ -17,7 +17,7 @@ def voice_command_route():
 
     if not isinstance(text, str) or not text.strip():
         logger.warning("voice_command_failed user_id=%s reason=missing_text", g.current_user["id"])
-        return jsonify({"error": "text is required"}), 400
+        return jsonify({"error": "我还没收到要处理的内容，请说一句日程需求或输入文字。"}), 400
 
     logger.info(
         "voice_command_received user_id=%s text_length=%s timezone=%s text=%s",
