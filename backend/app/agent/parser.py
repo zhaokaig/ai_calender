@@ -48,7 +48,7 @@ def classify_intent(text: str, timezone: str) -> IntentResult:
     return result
 
 
-def plan_calendar_actions(
+def recognize_event_tasks(
     text: str,
     timezone: str,
     existing_events: list[dict] | None = None,
@@ -56,10 +56,10 @@ def plan_calendar_actions(
     recent_turns: list[dict] | None = None,
 ) -> ActionPlan:
     normalized_text = text.strip()
-    logger.info("action_plan_start text_length=%s timezone=%s", len(normalized_text), timezone)
+    logger.info("event_recognition_start text_length=%s timezone=%s", len(normalized_text), timezone)
 
     if not current_app.config.get("OPENAI_API_KEY"):
-        logger.error("action_plan_failed reason=missing_api_key")
+        logger.error("event_recognition_failed reason=missing_api_key")
         return ActionPlan(intent=UNCLEAR_INTENT, reply="日程助手还没有配置好，暂时不能提取日程任务。")
 
     try:
@@ -75,7 +75,7 @@ def plan_calendar_actions(
             },
         )
     except Exception:
-        logger.exception("action_plan_failed reason=llm_error")
+        logger.exception("event_recognition_failed reason=llm_error")
         return ActionPlan(intent=UNCLEAR_INTENT, reply="我没能提取出具体日程，请说清楚时间和要做的事。")
     plan = ActionPlan.from_dict(
         {
@@ -98,12 +98,22 @@ def plan_calendar_actions(
             )
 
     logger.info(
-        "action_plan_success action_count=%s actions=%s",
+        "event_recognition_success action_count=%s actions=%s",
         len(plan.actions),
         [action.to_dict() for action in plan.actions],
     )
 
     return plan
+
+
+def plan_calendar_actions(
+    text: str,
+    timezone: str,
+    existing_events: list[dict] | None = None,
+    recent_events: list[dict] | None = None,
+    recent_turns: list[dict] | None = None,
+) -> ActionPlan:
+    return recognize_event_tasks(text, timezone, existing_events, recent_events, recent_turns)
 
 
 def _fallback_query_action(text: str, timezone: str) -> dict | None:
@@ -182,7 +192,7 @@ def parse_command(text: str, timezone: str) -> ActionPlan:
     if intent_plan.intent != CALENDAR_INTENT:
         return intent_plan.to_action_plan()
 
-    return plan_calendar_actions(intent_plan.text or text, timezone)
+    return recognize_event_tasks(intent_plan.text or text, timezone)
 
 
 def _invoke_json(system_prompt: str, payload: dict) -> dict:
@@ -267,7 +277,7 @@ def _intent_prompt() -> str:
 
 def _planner_prompt() -> str:
     return """
-你是语音日历助手的“任务提取”节点。你只能返回 JSON，不要输出解释文字。
+你是语音日历助手的“事件识别”节点。你只能返回 JSON，不要输出解释文字。
 
 输出结构：
 {
