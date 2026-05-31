@@ -1,219 +1,50 @@
-# ai_calender
+# AI Calendar
 
-A voice-first AI calendar built for a two-day Hackathon demo.
+AI Calendar 是一个语音优先的智能日历网页应用。用户可以通过语音或文字描述日程需求，系统会理解指令并在日历中创建、查询、修改或删除日程。
 
-## Current Scope
+## 演示 Demo 视频
 
-The project now includes:
+我用夸克网盘给你分享了「智能日历演示.mov」，点击链接或复制整段内容，打开「夸克APP」即可获取。
+/~56c43Ypeig~:/
+链接：https://pan.quark.cn/s/cee2fb4273a2
 
-- Flask backend with register/login and calendar event CRUD APIs;
-- React frontend for testing authentication and event workflows;
-- a placeholder chat panel for future LLM and voice input flows.
+## 已实现功能
 
-See `backend/ai_calender_backend_prd.md` for the full MVP plan.
+- 用户注册和登录
+- 月视图日历
+- 查看每天的日程
+- 手动新增、编辑、删除日程
+- 支持重复日程和部分重复日程删除
+- 短录音、长录音和文字输入
+- 语音转文字
+- 使用自然语言创建、查询、修改、删除日程
+- 前端通过 Docker + Nginx 部署
+- 后端通过 Docker + Flask/Gunicorn 部署
 
-## Backend Setup
+## 怎么启动
 
-```bash
-cd backend
-python3 -m venv ../.venv
-../.venv/bin/pip install -r requirements.txt
-../.venv/bin/flask --app app.main init-db
-../.venv/bin/flask --app app.main run
-```
-
-The backend starts at:
-
-```text
-http://127.0.0.1:5000
-```
-
-## Health Check
+1. 准备后端环境变量：
 
 ```bash
-curl http://127.0.0.1:5000/api/health
+cp backend/.env.example backend/.env
 ```
 
-Expected response:
+然后在 `backend/.env` 中填写自己的 `DASHSCOPE_API_KEY`。
 
-```json
-{
-  "environment": "development",
-  "service": "ai-calender",
-  "status": "ok"
-}
-```
-
-## Frontend Setup
-
-Open a second terminal:
+2. 构建并启动：
 
 ```bash
-cd frontend
-npm install
-npm run dev
+docker compose up -d --build
 ```
 
-The React frontend starts at:
-
-```text
-http://127.0.0.1:5173
-```
-
-During local development, Vite proxies `/api` requests to:
-
-```text
-http://127.0.0.1:5000
-```
-
-To point the frontend at a different backend URL, set:
-
-```bash
-VITE_API_BASE_URL=http://127.0.0.1:5000 npm run dev
-```
-
-## Frontend Test Flow
-
-1. Start the backend and frontend.
-2. Open `http://127.0.0.1:5173`.
-3. Register a user with a password of at least 6 characters.
-4. Add an event from the main calendar page.
-5. Click a date to view its events in the right panel.
-6. Click an event to edit or delete it.
-7. Use logout, then log back in with the same account.
-8. Click the short recording, long recording, or keyboard buttons to verify the placeholder chat UI.
-
-## Frontend Build
-
-```bash
-cd frontend
-npm run build
-```
-
-## Docker Compose Deployment
-
-Build the production-style Docker images locally:
-
-```bash
-docker compose build
-```
-
-Initialize the SQLite database in the persistent Docker volume:
-
-```bash
-docker compose run --rm backend flask --app app.main init-db
-```
-
-Start the backend and Nginx services:
-
-```bash
-docker compose up -d
-```
-
-The app is available at:
+3. 打开网页：
 
 ```text
 http://127.0.0.1:8080
 ```
 
-The health check is available at:
+4. 停止服务：
 
 ```bash
-curl http://127.0.0.1:8080/api/health
-```
-
-Useful operational commands:
-
-```bash
-docker compose ps
-docker compose logs -f backend
-docker compose logs -f nginx
-docker compose restart
 docker compose down
 ```
-
-For server deployment, create `backend/.env` on the server with production values:
-
-```env
-APP_ENV=production
-SECRET_KEY=replace-with-a-strong-random-secret
-DATABASE_PATH=instance/ai_calender.sqlite
-DASHSCOPE_API_KEY=replace-with-your-dashscope-api-key
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-ASR_MODEL=qwen3-asr-flash-2026-02-10
-AGENT_MODEL=qwen-plus
-AGENT_TEMPERATURE=0
-LOG_LEVEL=INFO
-LOG_FILE_PATH=instance/ai_calender.log
-```
-
-The default Compose port mapping is `8080:80` for local testing.
-
-On a server, use the server override so the frontend is available directly on port 80:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.server.yml up -d
-```
-
-Then open:
-
-```text
-http://your-server-ip/
-```
-
-If you bind a domain name to the server, open:
-
-```text
-http://your-domain.com/
-```
-
-## Voice Command API
-
-PR 3 adds a text-in, action-out agent endpoint. The frontend should send text produced by browser speech recognition or by the backend ASR endpoint.
-
-Configuration lives in `backend/.env`, so you do not need to export variables manually. Replace the placeholder key before running ASR or model-backed parsing:
-
-```env
-DASHSCOPE_API_KEY=your-bailian-api-key
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-ASR_MODEL=qwen3-asr-flash-2026-02-10
-AGENT_MODEL=qwen-plus
-```
-
-The backend uses Alibaba Cloud Model Studio / DashScope OpenAI-compatible APIs, LangChain for model calls, and LangGraph for agent orchestration.
-If no valid `DASHSCOPE_API_KEY` is configured, `/api/voice-command` uses a small rule-based fallback for the demo script. `/api/transcriptions` requires `DASHSCOPE_API_KEY`.
-
-Example flow:
-
-```bash
-curl -X POST http://127.0.0.1:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"password123"}'
-```
-
-Then call:
-
-```bash
-curl -X POST http://127.0.0.1:5000/api/voice-command \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"text":"明天下午三点和 Alex 开会","timezone":"Asia/Shanghai"}'
-```
-
-To transcribe audio with Qwen ASR:
-
-```bash
-curl -X POST http://127.0.0.1:5000/api/transcriptions \
-  -H "Authorization: Bearer <token>" \
-  -F "file=@/path/to/audio.webm"
-```
-
-## MVP Demo Goal
-
-The final Hackathon demo should support:
-
-- creating calendar events by voice;
-- querying events by voice;
-- updating events by voice;
-- deleting events by voice;
-- using text input as a fallback when voice recognition is unreliable.
